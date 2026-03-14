@@ -1,5 +1,29 @@
 {
-  "modelVersion": "6.0.0",
+  "app": {
+    "signingConfigs": [],
+    "products": [
+      {
+        "name": "default",
+        "signingConfig": "default",
+        "compatibleSdkVersion": 20,
+        "runtimeOS": "HarmonyOS",
+        "buildOption": {
+          "strictMode": {
+            "caseSensitiveCheck": true,
+            "useNormalizedOHMUrl": true
+          }
+        }
+      }
+    ],
+    "buildModeSet": [
+      {
+        "name": "debug"
+      },
+      {
+        "name": "release"
+      }
+    ]
+  },
   "modules": [
     {
       "name": "entry",
@@ -7,27 +31,11 @@
       "targets": [
         {
           "name": "default",
-          "applyToProducts": ["default"]
+          "applyToProducts": [
+            "default"
+          ]
         }
       ]
     }
-  ],
-  "buildOption": {
-    "targets": ["phone"]
-  },
-  "products": [
-    {
-      "name": "default",
-      "signingConfig": "default",
-      "compatibleSdkVersion": 20,
-      "runtimeOS": "HarmonyOS",
-      "buildOption": {
-        "strictMode": {
-          "caseSensitiveCheck": true,
-          "useNormalizedOHMUrl": true
-        }
-      }
-    }
-  ],
-  "signingConfigs": []
+  ]
 }
