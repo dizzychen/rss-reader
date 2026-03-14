@@ -1,5 +1,5 @@
 {
-  "modelVersion": "6.0.0",
+  "modelVersion": "6.0.2",
   "description": "Provides compile self-adaptation capability for HarmonyOS project.",
   "main": "",
   "name": "rss-reader",
