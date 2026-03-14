@@ -1,0 +1,18 @@
+{
+  "compileOnSave": false,
+  "buildOption": {
+    "arkOptions": {
+      "obfuscation": {
+        "ruleOptions": {
+          "enable": false
+        }
+      }
+    }
+  },
+  "modules": [
+    {
+      "name": "entry",
+      "srcPath": "./entry"
+    }
+  ]
+}

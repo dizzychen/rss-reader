@@ -1,0 +1,12 @@
+{
+  "src": [
+    "pages/Index",
+    "pages/FeedArticlesPage",
+    "pages/ArticleDetailPage",
+    "pages/StarredPage",
+    "pages/SearchPage",
+    "pages/SettingsPage",
+    "pages/AddFeedPage",
+    "pages/TagsManagePage"
+  ]
+}

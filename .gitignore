@@ -1,0 +1,15 @@
+# HarmonyOS build outputs
+build/
+.preview/
+.hvigor/
+node_modules/
+oh_modules/
+
+# IDE
+.idea/
+*.iml
+local.properties
+
+# OS
+.DS_Store
+Thumbs.db

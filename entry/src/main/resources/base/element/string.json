@@ -1,0 +1,8 @@
+{
+  "string": [
+    { "name": "app_name", "value": "RSS阅读器" },
+    { "name": "module_desc", "value": "RSS Reader Module" },
+    { "name": "EntryAbility_desc", "value": "RSS Reader" },
+    { "name": "EntryAbility_label", "value": "RSS阅读器" }
+  ]
+}
