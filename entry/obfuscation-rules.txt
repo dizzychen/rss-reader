@@ -1,0 +1,2 @@
+// Default rules for HarmonyOS obfuscation
+-disable-obfuscation

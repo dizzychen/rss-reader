@@ -1,18 +1,30 @@
 {
-  "compileOnSave": false,
-  "buildOption": {
-    "arkOptions": {
-      "obfuscation": {
-        "ruleOptions": {
-          "enable": false
-        }
-      }
-    }
-  },
+  "modelVersion": "5.0.0",
   "modules": [
     {
       "name": "entry",
-      "srcPath": "./entry"
+      "srcPath": "./entry",
+      "targets": [
+        {
+          "name": "default",
+          "applyToProducts": ["default"]
+        }
+      ]
     }
-  ]
+  ],
+  "products": [
+    {
+      "name": "default",
+      "signingConfig": "default",
+      "compatibleSdkVersion": "5.0.5(14)",
+      "runtimeOS": "HarmonyOS",
+      "buildOption": {
+        "strictMode": {
+          "caseSensitiveCheck": true,
+          "useNormalizedOHMUrl": true
+        }
+      }
+    }
+  ],
+  "signingConfigs": []
 }

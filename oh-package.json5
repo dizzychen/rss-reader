@@ -1,0 +1,8 @@
+{
+  "modelVersion": "5.0.0",
+  "description": "Provides compile self-adaptation capability for HarmonyOS project.",
+  "main": "",
+  "name": "rss-reader",
+  "version": "1.0.0",
+  "dependencies": {}
+}

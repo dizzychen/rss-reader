@@ -1,15 +1,24 @@
 # HarmonyOS build outputs
 build/
+dist/
 .preview/
 .hvigor/
 node_modules/
 oh_modules/
+*.hap
+*.app
 
 # IDE
 .idea/
 *.iml
 local.properties
+.DS_Store
+.vs_code/
 
 # OS
 .DS_Store
 Thumbs.db
+
+# Lock files (optional, for team consistency)
+# oh-package-lock.json5
+# package-lock.json
