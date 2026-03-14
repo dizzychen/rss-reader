@@ -8,6 +8,7 @@
     "label": "$string:app_name",
     "minAPIVersion": 20,
     "targetAPIVersion": 20,
+    "targetSdkVersion": "6.0.0(20)",
     "apiReleaseType": "Release"
   }
 }
