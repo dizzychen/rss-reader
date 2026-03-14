@@ -12,6 +12,9 @@
       ]
     }
   ],
+  "buildOption": {
+    "targets": ["phone"]
+  },
   "products": [
     {
       "name": "default",
