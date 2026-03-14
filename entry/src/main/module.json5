@@ -39,6 +39,9 @@
       },
       {
         "name": "ohos.permission.SEND_MESSAGES"
+      },
+      {
+        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
       }
     ],
     "backgroundModes": ["dataTransfer"]

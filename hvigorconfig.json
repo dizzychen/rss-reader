@@ -1,6 +1,6 @@
 {
   "apiType": "stageMode",
-  "compileSdkVersion": "5.0.5(14)",
-  "compatibleSdkVersion": "5.0.5(14)",
+  "compileSdkVersion": "6.0.0(20)",
+  "compatibleSdkVersion": "6.0.0(20)",
   "runtimeOS": "HarmonyOS"
 }

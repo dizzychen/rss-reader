@@ -1,5 +1,5 @@
 {
-  "modelVersion": "5.0.0",
+  "modelVersion": "6.0.0",
   "modules": [
     {
       "name": "entry",
@@ -16,7 +16,7 @@
     {
       "name": "default",
       "signingConfig": "default",
-      "compatibleSdkVersion": "5.0.5(14)",
+      "compatibleSdkVersion": "6.0.0(20)",
       "runtimeOS": "HarmonyOS",
       "buildOption": {
         "strictMode": {
