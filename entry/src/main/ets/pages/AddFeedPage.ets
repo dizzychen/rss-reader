@@ -47,7 +47,8 @@ struct AddFeedPage {
       this.previewTitle = info.title || '（无标题）';
       this.previewDesc = info.description || '';
     } catch (e) {
-      this.errorMsg = `无法获取订阅源：${e.message || e}`;
+      const err = e as Error;
+      this.errorMsg = `无法获取订阅源：${err?.message || String(e)}`;
     } finally {
       this.isValidating = false;
     }
@@ -92,7 +93,8 @@ struct AddFeedPage {
 
       router.back();
     } catch (e) {
-      this.errorMsg = `添加失败：${e.message || e}`;
+      const err = e as Error;
+      this.errorMsg = `添加失败：${err?.message || String(e)}`;
     }
   }
 

@@ -1,4 +1,5 @@
 import { preferences } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
 import { Constants } from '../constants/Constants';
 import { AppSettings } from '../model/Models';
 
@@ -13,7 +14,7 @@ export class SettingsService {
     return SettingsService.instance;
   }
 
-  async init(context: Context): Promise<void> {
+  async init(context: common.Context): Promise<void> {
     this.prefs = await preferences.getPreferences(context, Constants.PREF_NAME);
   }
 

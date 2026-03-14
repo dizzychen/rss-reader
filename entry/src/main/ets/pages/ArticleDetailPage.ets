@@ -170,7 +170,6 @@ struct ArticleDetailPage {
           }
         })
         .javaScriptAccess(false)
-        .overScrollMode(OverScrollMode.NEVER)
     }
     .width('100%')
     .height('100%')

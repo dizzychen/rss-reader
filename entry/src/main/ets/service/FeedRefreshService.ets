@@ -3,6 +3,7 @@ import { RssService } from './RssService';
 import { SettingsService } from './SettingsService';
 import { Feed } from '../model/Models';
 import { notificationManager } from '@kit.NotificationKit';
+import { common } from '@kit.AbilityKit';
 
 export class FeedRefreshService {
   private static instance: FeedRefreshService;
@@ -17,7 +18,7 @@ export class FeedRefreshService {
   /**
    * 刷新所有订阅源
    */
-  async refreshAll(context: Context): Promise<number> {
+  async refreshAll(context: common.Context): Promise<number> {
     const db = DatabaseHelper.getInstance();
     const rss = RssService.getInstance();
     const settings = await SettingsService.getInstance().getSettings();
@@ -46,7 +47,7 @@ export class FeedRefreshService {
   /**
    * 刷新单个订阅源，返回新增文章数
    */
-  async refreshSingleFeed(feed: Feed, context?: Context): Promise<number> {
+  async refreshSingleFeed(feed: Feed, context?: common.Context): Promise<number> {
     const db = DatabaseHelper.getInstance();
     const rss = RssService.getInstance();
 

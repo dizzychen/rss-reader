@@ -1,4 +1,5 @@
 import { relationalStore } from '@kit.ArkData';
+import { common } from '@kit.AbilityKit';
 import { Constants } from '../constants/Constants';
 import { Feed, Article, FeedGroup, Tag } from '../model/Models';
 
@@ -71,7 +72,7 @@ export class DatabaseHelper {
     return DatabaseHelper.instance;
   }
 
-  async init(context: Context): Promise<void> {
+  async init(context: common.Context): Promise<void> {
     if (this.rdbStore) return;
     this.rdbStore = await relationalStore.getRdbStore(context, DB_CONFIG);
     await this.rdbStore.executeSql(SQL_CREATE_GROUPS);
