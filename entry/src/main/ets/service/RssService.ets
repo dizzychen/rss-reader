@@ -1,5 +1,5 @@
 import { http } from '@kit.NetworkKit';
-import { xml } from '@kit.ArkTS';
+import { xml, util } from '@kit.ArkTS';
 import { Feed, Article } from '../model/Models';
 
 const TAG = 'RssParser';
@@ -54,6 +54,7 @@ export class RssService {
     try {
       const response = await httpRequest.request(url, {
         method: http.RequestMethod.GET,
+        expectDataType: http.HttpDataType.STRING,
         connectTimeout: 10000,
         readTimeout: 15000,
         header: {
@@ -81,6 +82,11 @@ export class RssService {
     throw new Error('不支持的格式：无法识别RSS或Atom');
   }
 
+  private stringToArrayBuffer(str: string): ArrayBuffer {
+    const encoder = new util.TextEncoder();
+    return encoder.encodeInto(str).buffer as ArrayBuffer;
+  }
+
   private parseRss2(xmlContent: string): ParsedFeedInfo {
     const info: ParsedFeedInfo = {
       title: '',
@@ -91,10 +97,8 @@ export class RssService {
     };
 
     try {
-      const parser = new xml.XmlPullParser({
-        chunk: xmlContent,
-        encoding: 'utf-8'
-      });
+      const buffer = this.stringToArrayBuffer(xmlContent);
+      const parser = new xml.XmlPullParser(buffer, 'utf-8');
 
       let currentTag = '';
       let tagStack: string[] = [];
@@ -182,10 +186,8 @@ export class RssService {
     };
 
     try {
-      const parser = new xml.XmlPullParser({
-        chunk: xmlContent,
-        encoding: 'utf-8'
-      });
+      const buffer = this.stringToArrayBuffer(xmlContent);
+      const parser = new xml.XmlPullParser(buffer, 'utf-8');
 
       let currentTag = '';
       let currentArticle: ParsedArticle | null = null;

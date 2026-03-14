@@ -4,7 +4,7 @@ import { RssService } from '../service/RssService';
 
 @Component
 export struct ArticleItemComponent {
-  article: Article = {} as Article;
+  @Prop article: Article = {} as Article;
   onTap: () => void = () => {};
   onStarToggle: () => void = () => {};
 

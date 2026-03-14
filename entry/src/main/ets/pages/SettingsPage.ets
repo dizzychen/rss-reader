@@ -1,6 +1,5 @@
 // 设置页
-import { router } from '@kit.ArkUI';
-import { promptAction } from '@kit.ArkUI';
+import { router, promptAction } from '@kit.ArkUI';
 import { AppSettings } from '../model/Models';
 import { SettingsService } from '../service/SettingsService';
 import { DatabaseHelper } from '../database/DatabaseHelper';
@@ -64,29 +63,56 @@ struct SettingsPage {
           // ===== 刷新设置 =====
           this.sectionHeader('刷新与通知')
           Column() {
-            // 刷新间隔
-            this.settingItem('自动刷新间隔', () => {
-              Select(Constants.REFRESH_INTERVAL_LABELS.map(l => ({ value: l })))
+            // 自动刷新间隔
+            Row() {
+              Text('自动刷新间隔')
+                .fontSize(15)
+                .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                .layoutWeight(1)
+              Select(Constants.REFRESH_INTERVAL_LABELS.map((l: string) => ({ value: l })))
                 .selected(Constants.REFRESH_INTERVALS.indexOf(this.settings.refreshInterval))
-                .onSelect((index) => {
+                .onSelect((index: number) => {
                   this.setSetting(Constants.PREF_REFRESH_INTERVAL, Constants.REFRESH_INTERVALS[index]);
                 })
                 .font({ size: 14 })
-            })
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
 
             Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
 
-            // 后台刷新
-            this.settingToggleItem('后台自动刷新', this.settings.bgRefreshEnabled, (val) => {
-              this.setSetting(Constants.PREF_BG_REFRESH, val);
-            })
+            // 后台自动刷新
+            Row() {
+              Text('后台自动刷新')
+                .fontSize(15)
+                .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.settings.bgRefreshEnabled })
+                .onChange((val: boolean) => {
+                  this.setSetting(Constants.PREF_BG_REFRESH, val);
+                })
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
 
             Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
 
-            // 通知推送
-            this.settingToggleItem('新文章通知', this.settings.notificationEnabled, (val) => {
-              this.setSetting(Constants.PREF_NOTIFICATION, val);
-            })
+            // 新文章通知
+            Row() {
+              Text('新文章通知')
+                .fontSize(15)
+                .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.settings.notificationEnabled })
+                .onChange((val: boolean) => {
+                  this.setSetting(Constants.PREF_NOTIFICATION, val);
+                })
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
           }
           .backgroundColor($r('sys.color.ohos_id_color_background'))
           .borderRadius(12)
@@ -95,22 +121,39 @@ struct SettingsPage {
           this.sectionHeader('阅读')
           Column() {
             // 字体大小
-            this.settingItem('字体大小', () => {
-              Select(Constants.FONT_SIZE_LABELS.map(l => ({ value: l })))
+            Row() {
+              Text('字体大小')
+                .fontSize(15)
+                .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                .layoutWeight(1)
+              Select(Constants.FONT_SIZE_LABELS.map((l: string) => ({ value: l })))
                 .selected(this.fontSizeIndex)
-                .onSelect((index) => {
+                .onSelect((index: number) => {
                   this.fontSizeIndex = index;
                   this.setSetting(Constants.PREF_FONT_SIZE, Constants.FONT_SIZES[index]);
                 })
                 .font({ size: 14 })
-            })
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
 
             Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
 
-            // 原文打开方式
-            this.settingToggleItem('在应用内打开原文', this.settings.openOriginalInApp, (val) => {
-              this.setSetting(Constants.PREF_OPEN_ORIGINAL, val);
-            })
+            // 在应用内打开原文
+            Row() {
+              Text('在应用内打开原文')
+                .fontSize(15)
+                .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                .layoutWeight(1)
+              Toggle({ type: ToggleType.Switch, isOn: this.settings.openOriginalInApp })
+                .onChange((val: boolean) => {
+                  this.setSetting(Constants.PREF_OPEN_ORIGINAL, val);
+                })
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
           }
           .backgroundColor($r('sys.color.ohos_id_color_background'))
           .borderRadius(12)
@@ -119,14 +162,21 @@ struct SettingsPage {
           this.sectionHeader('缓存与数据')
           Column() {
             // 每源缓存数量
-            this.settingItem('每源缓存文章数', () => {
-              Select(Constants.CACHE_COUNT_OPTIONS.map(n => ({ value: `${n}篇` })))
+            Row() {
+              Text('每源缓存文章数')
+                .fontSize(15)
+                .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                .layoutWeight(1)
+              Select(Constants.CACHE_COUNT_OPTIONS.map((n: number) => ({ value: `${n}篇` })))
                 .selected(Constants.CACHE_COUNT_OPTIONS.indexOf(this.settings.cacheCountPerFeed))
-                .onSelect((index) => {
+                .onSelect((index: number) => {
                   this.setSetting(Constants.PREF_CACHE_COUNT, Constants.CACHE_COUNT_OPTIONS[index]);
                 })
                 .font({ size: 14 })
-            })
+            }
+            .width('100%')
+            .height(52)
+            .padding({ left: 16, right: 16 })
 
             Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
 
@@ -146,7 +196,6 @@ struct SettingsPage {
                   value: '清除',
                   fontColor: Color.Red,
                   action: async () => {
-                    // 清除操作：遍历所有feed，保留 0 篇缓存（仅保留收藏）
                     const feeds = await DatabaseHelper.getInstance().getAllFeeds();
                     for (const f of feeds) {
                       await DatabaseHelper.getInstance().cleanOldCache(f.id!, 0);
@@ -161,7 +210,7 @@ struct SettingsPage {
           .backgroundColor($r('sys.color.ohos_id_color_background'))
           .borderRadius(12)
 
-          // ===== 订阅源管理 =====
+          // ===== 订阅源 =====
           this.sectionHeader('订阅源')
           Column() {
             Row() {
@@ -203,28 +252,5 @@ struct SettingsPage {
       .fontColor($r('sys.color.ohos_id_color_text_secondary'))
       .width('100%')
       .padding({ left: 4, bottom: 4 })
-  }
-
-  @Builder
-  settingItem(label: string, content: () => void) {
-    Row() {
-      Text(label).fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary')).layoutWeight(1)
-      content()
-    }
-    .width('100%')
-    .height(52)
-    .padding({ left: 16, right: 16 })
-  }
-
-  @Builder
-  settingToggleItem(label: string, isOn: boolean, onChange: (val: boolean) => void) {
-    Row() {
-      Text(label).fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary')).layoutWeight(1)
-      Toggle({ type: ToggleType.Switch, isOn: isOn })
-        .onChange(onChange)
-    }
-    .width('100%')
-    .height(52)
-    .padding({ left: 16, right: 16 })
   }
 }

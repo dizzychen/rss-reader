@@ -19,7 +19,6 @@ export struct FeedsPage {
     const db = DatabaseHelper.getInstance();
     this.groups = await db.getAllGroups();
     this.feeds = await db.getAllFeeds();
-    // 加载未读数
     const map = new Map<number, number>();
     for (const feed of this.feeds) {
       map.set(feed.id!, await db.getUnreadCountByFeed(feed.id!));
@@ -31,8 +30,8 @@ export struct FeedsPage {
     return this.feeds.filter(f => f.groupId === groupId);
   }
 
-  async deleteFeed(feed: Feed) {
-    await DatabaseHelper.getInstance().deleteFeed(feed.id!);
+  async deleteFeedById(feedId: number) {
+    await DatabaseHelper.getInstance().deleteFeed(feedId);
     await this.loadData();
   }
 
@@ -105,16 +104,15 @@ export struct FeedsPage {
       } else {
         List() {
           ForEach(this.groups, (group: FeedGroup) => {
-            // 组标题
             ListItemGroup({
-              header: this.groupHeader(group)
+              header: this.groupHeaderBuilder(group.name)
             }) {
               ForEach(this.getFeedsInGroup(group.id!), (feed: Feed) => {
                 ListItem() {
-                  this.feedItem(feed)
+                  this.feedItemBuilder(feed)
                 }
                 .swipeAction({
-                  end: this.swipeDeleteBuilder(feed)
+                  end: this.swipeDeleteBuilder(feed.id!, feed.title)
                 })
               }, (feed: Feed) => `${feed.id}`)
             }
@@ -131,9 +129,9 @@ export struct FeedsPage {
   }
 
   @Builder
-  groupHeader(group: FeedGroup) {
+  groupHeaderBuilder(name: string) {
     Row() {
-      Text(group.name)
+      Text(name)
         .fontSize(13)
         .fontColor($r('sys.color.ohos_id_color_text_secondary'))
         .fontWeight(FontWeight.Medium)
@@ -145,7 +143,7 @@ export struct FeedsPage {
   }
 
   @Builder
-  feedItem(feed: Feed) {
+  feedItemBuilder(feed: Feed) {
     Row({ space: 12 }) {
       // 图标
       if (feed.iconUrl) {
@@ -210,7 +208,7 @@ export struct FeedsPage {
   }
 
   @Builder
-  swipeDeleteBuilder(feed: Feed) {
+  swipeDeleteBuilder(feedId: number, feedTitle: string) {
     Button('删除')
       .fontSize(14)
       .fontColor(Color.White)
@@ -220,11 +218,11 @@ export struct FeedsPage {
       .onClick(() => {
         AlertDialog.show({
           title: '删除订阅源',
-          message: `确定删除「${feed.title}」？相关文章也会被删除。`,
+          message: `确定删除「${feedTitle}」？相关文章也会被删除。`,
           primaryButton: {
             value: '删除',
             fontColor: Color.Red,
-            action: () => this.deleteFeed(feed)
+            action: () => this.deleteFeedById(feedId)
           },
           secondaryButton: {
             value: '取消',
