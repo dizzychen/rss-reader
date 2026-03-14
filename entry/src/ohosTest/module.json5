@@ -1,0 +1,22 @@
+{
+  "module": {
+    "name": "entry_test",
+    "type": "feature",
+    "description": "RSS Reader Unit Tests",
+    "deviceTypes": ["phone"],
+    "deliveryWithInstall": true,
+    "installationFree": false,
+    "abilities": [
+      {
+        "name": "TestAbility",
+        "srcEntry": "./ets/TestAbility.ets",
+        "description": "Test Ability",
+        "icon": "$media:app_icon",
+        "label": "$string:EntryAbility_label",
+        "exported": true,
+        "startWindowIcon": "$media:startIcon",
+        "startWindowBackground": "$color:start_window_background"
+      }
+    ]
+  }
+}
