@@ -1,11 +1,11 @@
 {
   "compileOnSave": false,
+  "targets": [
+    {
+      "name": "default"
+    }
+  ],
   "buildOption": {
-    "externalNativeOptions": {
-      "path": "",
-      "arguments": "",
-      "abiFilters": ["arm64-v8a", "x86_64"]
-    },
     "arkOptions": {
       "obfuscation": {
         "ruleOptions": {
