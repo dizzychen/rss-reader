@@ -1,9 +1,8 @@
 // 首页：展示所有文章（聚合视图）
-import router from '@ohos.router';
+import { router } from '@kit.ArkUI';
 import { Article } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedRefreshService } from '../service/FeedRefreshService';
-import { RssService } from '../service/RssService';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
 
 @Component

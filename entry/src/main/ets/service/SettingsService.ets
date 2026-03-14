@@ -1,4 +1,4 @@
-import preferences from '@ohos.data.preferences';
+import { preferences } from '@kit.ArkData';
 import { Constants } from '../constants/Constants';
 import { AppSettings } from '../model/Models';
 

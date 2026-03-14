@@ -1,5 +1,5 @@
 // 搜索页
-import router from '@ohos.router';
+import { router } from '@kit.ArkUI';
 import { Article, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';

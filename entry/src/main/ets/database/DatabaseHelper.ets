@@ -1,4 +1,4 @@
-import relationalStore from '@ohos.data.relationalStore';
+import { relationalStore } from '@kit.ArkData';
 import { Constants } from '../constants/Constants';
 import { Feed, Article, FeedGroup, Tag } from '../model/Models';
 

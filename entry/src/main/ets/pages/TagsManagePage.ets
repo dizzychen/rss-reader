@@ -1,5 +1,5 @@
 // 标签管理页
-import router from '@ohos.router';
+import { router } from '@kit.ArkUI';
 import { Tag } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 

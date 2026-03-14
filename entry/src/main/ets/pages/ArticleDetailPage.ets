@@ -1,6 +1,6 @@
 // 文章详情页（内置阅读器）
-import router from '@ohos.router';
-import webview from '@ohos.web.webview';
+import { router } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
 import { Article } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { RssService } from '../service/RssService';

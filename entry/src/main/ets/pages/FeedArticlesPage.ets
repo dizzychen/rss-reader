@@ -1,5 +1,5 @@
 // 订阅源文章列表页
-import router from '@ohos.router';
+import { router } from '@kit.ArkUI';
 import { Article, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedRefreshService } from '../service/FeedRefreshService';

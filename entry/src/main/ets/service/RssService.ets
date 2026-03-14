@@ -1,5 +1,5 @@
-import http from '@ohos.net.http';
-import xml from '@ohos.xml';
+import { http } from '@kit.NetworkKit';
+import { xml } from '@kit.ArkTS';
 import { Feed, Article } from '../model/Models';
 
 const TAG = 'RssParser';

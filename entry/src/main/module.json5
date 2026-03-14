@@ -26,24 +26,13 @@
         ]
       }
     ],
-    "extensionAbilities": [
-      {
-        "name": "RssRefreshWorker",
-        "srcEntry": "./ets/workers/RssRefreshWorker.ets",
-        "type": "workScheduler"
-      }
-    ],
     "requestPermissions": [
       {
         "name": "ohos.permission.INTERNET"
       },
       {
-        "name": "ohos.permission.SEND_MESSAGES"
-      },
-      {
-        "name": "ohos.permission.KEEP_BACKGROUND_RUNNING"
+        "name": "ohos.permission.NOTIFICATION"
       }
-    ],
-    "backgroundModes": ["dataTransfer"]
+    ]
   }
 }

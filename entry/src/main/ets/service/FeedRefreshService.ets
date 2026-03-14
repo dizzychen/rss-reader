@@ -2,7 +2,7 @@ import { DatabaseHelper } from '../database/DatabaseHelper';
 import { RssService } from './RssService';
 import { SettingsService } from './SettingsService';
 import { Feed } from '../model/Models';
-import notificationManager from '@ohos.notificationManager';
+import { notificationManager } from '@kit.NotificationKit';
 
 export class FeedRefreshService {
   private static instance: FeedRefreshService;

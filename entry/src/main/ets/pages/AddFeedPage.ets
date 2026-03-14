@@ -1,5 +1,5 @@
 // 添加订阅源页面
-import router from '@ohos.router';
+import { router } from '@kit.ArkUI';
 import { RssService } from '../service/RssService';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedGroup } from '../model/Models';

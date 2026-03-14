@@ -1,5 +1,6 @@
 // 设置页
-import router from '@ohos.router';
+import { router } from '@kit.ArkUI';
+import { promptAction } from '@kit.ArkUI';
 import { AppSettings } from '../model/Models';
 import { SettingsService } from '../service/SettingsService';
 import { DatabaseHelper } from '../database/DatabaseHelper';
