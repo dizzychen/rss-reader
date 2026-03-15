@@ -1,5 +1,10 @@
 {
   "src": [
-    "pages/Index"
+    "pages/Index",
+    "pages/FeedArticlesPage",
+    "pages/ArticleDetailPage",
+    "pages/SettingsPage",
+    "pages/AddFeedPage",
+    "pages/TagsManagePage"
   ]
 }
