@@ -1,11 +1,7 @@
 {
-  "compileOnSave": false,
   "targets": [
     {
-      "name": "default",
-      "applyToProducts": [
-        "default"
-      ]
+      "name": "default"
     }
   ],
   "buildOption": {
@@ -18,9 +14,5 @@
         "consumerFiles": ["./consumer-rules.txt"]
       }
     }
-  },
-  "buildModeSet": [
-    { "name": "debug" },
-    { "name": "release" }
-  ]
+  }
 }
