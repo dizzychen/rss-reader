@@ -120,6 +120,24 @@ export class RssService {
     };
 
     try {
+      // 预先解析 enclosure 标签的属性
+      const enclosureMap = new Map<string, { type: string; url: string }>();
+      const enclosureRegex = /<enclosure\s+([^>]*?)\s*\/?>/gi;
+      let enclosureMatch: RegExpExecArray | null;
+      let enclosureIndex = 0;
+      while ((enclosureMatch = enclosureRegex.exec(xmlContent)) !== null) {
+        const attrs = enclosureMatch[1];
+        const typeMatch = attrs.match(/type\s*=\s*["']([^"']+)["']/i);
+        const urlMatch = attrs.match(/url\s*=\s*["']([^"']+)["']/i);
+        if (typeMatch || urlMatch) {
+          enclosureMap.set(`enclosure-${enclosureIndex}`, {
+            type: typeMatch ? typeMatch[1] : '',
+            url: urlMatch ? urlMatch[1] : ''
+          });
+          enclosureIndex++;
+        }
+      }
+
       const buffer = this.stringToArrayBuffer(xmlContent);
       const parser = new xml.XmlPullParser(buffer, 'utf-8');
       let currentTag: string = '';
@@ -128,21 +146,11 @@ export class RssService {
       let inChannel: boolean = false;
       let inItem: boolean = false;
       let textBuffer: string = '';
-      // 用于暂存 enclosure 属性
-      let pendingEnclosureType: string = '';
-      let pendingEnclosureUrl: string = '';
+      let enclosureCounter = 0;
 
       const options: xml.ParseOptions = {
         supportDoctype: false,
         ignoreNameSpace: true,
-        // 使用 attributeWithTagCallbackFunction 获取属性（SDK 20+）
-        attributeWithTagCallbackFunction: (tagName: string, key: string, value: string): boolean => {
-          if (tagName === 'enclosure') {
-            if (key === 'type') pendingEnclosureType = value;
-            if (key === 'url') pendingEnclosureUrl = value;
-          }
-          return true;
-        },
         tokenValueCallbackFunction: (eventType: xml.EventType, value: xml.ParseInfo): boolean => {
           if (eventType === xml.EventType.START_TAG) {
             currentTag = value.getName();
@@ -157,14 +165,15 @@ export class RssService {
                 url: '', author: '', publishedAt: 0, coverImage: ''
               };
             }
-            // enclosure 的属性已在 attributeWithTagCallbackFunction 中收集
-            // 注意：attributeWithTagCallbackFunction 先于 tokenValueCallbackFunction 调用
+            // 处理 enclosure 标签
             if (currentTag === 'enclosure' && currentArticle) {
-              if (pendingEnclosureType && pendingEnclosureType.startsWith('image/') && pendingEnclosureUrl) {
-                currentArticle.coverImage = pendingEnclosureUrl;
+              const enclosureData = enclosureMap.get(`enclosure-${enclosureCounter}`);
+              if (enclosureData) {
+                if (enclosureData.type && enclosureData.type.startsWith('image/') && enclosureData.url) {
+                  currentArticle.coverImage = enclosureData.url;
+                }
+                enclosureCounter++;
               }
-              pendingEnclosureType = '';
-              pendingEnclosureUrl = '';
             }
           } else if (eventType === xml.EventType.TEXT || eventType === xml.EventType.CDSECT) {
             // TEXT：普通文本；CDSECT：<![CDATA[...]]> 内容，两者都累积到 buffer
@@ -191,6 +200,8 @@ export class RssService {
                   info.articles.push(currentArticle);
                   currentArticle = null;
                   inItem = false;
+                  // 重置 enclosure 计数器
+                  enclosureCounter = 0;
                   break;
               }
             } else if (inChannel && !inItem) {
@@ -227,26 +238,51 @@ export class RssService {
     };
 
     try {
+      // 预先解析所有 link 标签的属性
+      interface LinkData { rel: string; href: string; inEntry: boolean; }
+      const allLinks: LinkData[] = [];
+      const linkRegex = /<link\s+([^>]*)\/?>/gi;
+      let linkMatch: RegExpExecArray | null;
+      let depth = 0;
+      let inEntryCheck = false;
+      const lines = xmlContent.split('\n');
+      let entryDepth = -1;
+
+      // 使用简单方法：按顺序提取 link 标签及其属性
+      const fullLinkRegex = /<link\s+([^>]*?)\s*\/?>/gi;
+      let currentPos = 0;
+      let checkInEntry = false;
+
+      while ((linkMatch = fullLinkRegex.exec(xmlContent)) !== null) {
+        const attrs = linkMatch[1];
+        const relMatch = attrs.match(/rel\s*=\s*["']([^"']+)["']/i);
+        const hrefMatch = attrs.match(/href\s*=\s*["']([^"']+)["']/i);
+
+        // 判断是否在 entry 标签内
+        const linkStartPos = linkMatch.index;
+        const beforeLink = xmlContent.substring(0, linkStartPos);
+        const entryOpens = (beforeLink.match(/<entry>/g) || []).length;
+        const entryCloses = (beforeLink.match(/<\/entry>/g) || []).length;
+        checkInEntry = entryOpens > entryCloses;
+
+        const rel = relMatch ? relMatch[1] : 'alternate';
+        const href = hrefMatch ? hrefMatch[1] : '';
+
+        if (href) {
+          allLinks.push({ rel, href, inEntry: checkInEntry });
+        }
+      }
+
       const buffer = this.stringToArrayBuffer(xmlContent);
       const parser = new xml.XmlPullParser(buffer, 'utf-8');
       let inEntry: boolean = false;
       let currentArticle: ParsedArticle | null = null;
       let textBuffer: string = '';
-      // 用于暂存 link 标签的属性
-      let pendingLinkRel: string = '';
-      let pendingLinkHref: string = '';
+      let linkIdx: number = 0;
 
       const options: xml.ParseOptions = {
         supportDoctype: false,
         ignoreNameSpace: true,
-        // 使用 attributeWithTagCallbackFunction 获取属性（SDK 20+）
-        attributeWithTagCallbackFunction: (tagName: string, key: string, value: string): boolean => {
-          if (tagName === 'link') {
-            if (key === 'rel') pendingLinkRel = value;
-            if (key === 'href') pendingLinkHref = value;
-          }
-          return true;
-        },
         tokenValueCallbackFunction: (eventType: xml.EventType, value: xml.ParseInfo): boolean => {
           if (eventType === xml.EventType.START_TAG) {
             const rawName: string = value.getName();
@@ -260,25 +296,20 @@ export class RssService {
                 url: '', author: '', publishedAt: 0, coverImage: ''
               };
             }
-            // 处理 link 标签 - 属性已由 attributeWithTagCallbackFunction 收集
-            if (tagName === 'link') {
-              const rel: string = pendingLinkRel || 'alternate';
-              const href: string = pendingLinkHref;
+            // 处理 link 标签 - 使用预提取的数据
+            if (tagName === 'link' && linkIdx < allLinks.length) {
+              const linkData = allLinks[linkIdx];
+              linkIdx++;
 
-              if (href) {
-                if (inEntry && currentArticle) {
-                  if (rel === 'alternate' && !currentArticle.url) {
-                    currentArticle.url = href;
-                  }
-                } else if (!inEntry) {
-                  if (rel === 'alternate' && !info.siteUrl) {
-                    info.siteUrl = href;
-                  }
+              if (inEntry && currentArticle) {
+                if (linkData.rel === 'alternate' && !currentArticle.url) {
+                  currentArticle.url = linkData.href;
+                }
+              } else if (!inEntry) {
+                if (linkData.rel === 'alternate' && !info.siteUrl) {
+                  info.siteUrl = linkData.href;
                 }
               }
-              // 重置暂存的属性
-              pendingLinkRel = '';
-              pendingLinkHref = '';
             }
           } else if (eventType === xml.EventType.TEXT || eventType === xml.EventType.CDSECT) {
             textBuffer += value.getText() || '';
