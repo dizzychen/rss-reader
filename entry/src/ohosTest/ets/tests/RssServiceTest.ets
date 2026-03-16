@@ -164,5 +164,137 @@ export default function RssServiceTest() {
         expect(result).assertEqual('https://example.com/cover.jpg');
       });
     });
+
+    // ==================== stripHtml 测试 ====================
+
+    describe('stripHtml', () => {
+      it('should_remove_html_tags', 0, () => {
+        const html = '<p>Hello <b>World</b></p>';
+        const result = (service as any).stripHtml(html);
+        expect(result).assertEqual('Hello World');
+      });
+
+      it('should_decode_html_entities', 0, {
+        const html = 'Tom &amp; Jerry &lt;3';
+        const result = (service as any).stripHtml(html);
+        expect(result).assertEqual('Tom & Jerry <3');
+      });
+
+      it('should_handle_empty_string', 0, () => {
+        const result = (service as any).stripHtml('');
+        expect(result).assertEqual('');
+      });
+
+      it('should_handle_plain_text', 0, () => {
+        const result = (service as any).stripHtml('Just plain text');
+        expect(result).assertEqual('Just plain text');
+      });
+    });
+
+    // ==================== parseDate 测试 ====================
+
+    describe('parseDate', () => {
+      it('should_parse_iso_date', 0, () => {
+        const result = (service as any).parseDate('2024-03-15T10:30:00Z');
+        expect(result).assertGreaterThan(0);
+      });
+
+      it('should_parse_rfc822_date', 0, () => {
+        const result = (service as any).parseDate('Fri, 15 Mar 2024 10:30:00 GMT');
+        expect(result).assertGreaterThan(0);
+      });
+
+      it('should_return_now_for_empty', 0, () => {
+        const now = Date.now();
+        const result = (service as any).parseDate('');
+        expect(result).assertGreaterThan(now - 1000);
+      });
+
+      it('should_return_now_for_invalid', 0, () => {
+        const now = Date.now();
+        const result = (service as any).parseDate('invalid');
+        expect(result).assertGreaterThan(now - 1000);
+      });
+    });
+
+    // ==================== parseRss2 测试 ====================
+
+    describe('parseRss2', () => {
+      it('should_parse_rss2_feed', 0, () => {
+        const result = (service as any).parseRss2(MOCK_RSS2_XML);
+        expect(result.title).assertEqual('测试 RSS 源');
+        expect(result.siteUrl).assertEqual('https://example.com');
+        expect(result.articles.length).assertEqual(2);
+      });
+
+      it('should_parse_enclosure_image', 0, () => {
+        const result = (service as any).parseRss2(MOCK_RSS2_XML);
+        expect(result.articles[1].coverImage).assertEqual('https://example.com/image.jpg');
+      });
+
+      it('should_decode_html_in_description', 0, () => {
+        const result = (service as any).parseRss2(MOCK_RSS2_XML);
+        // 摘要应包含 HTML 解码后的内容
+        expect(result.articles[0].summary).assertContain('文章 1');
+      });
+
+      it('should_fallback_guid_to_url', 0, () => {
+        const rssNoGuid = `<?xml version="1.0"?>
+        <rss version="2.0"><channel><title>Test</title>
+        <item><title>No Guid</title><link>https://example.com/item</link></item>
+        </channel></rss>`;
+        const result = (service as any).parseRss2(rssNoGuid);
+        expect(result.articles[0].guid).assertEqual('https://example.com/item');
+      });
+    });
+
+    // ==================== parseAtom 测试 ====================
+
+    describe('parseAtom', () => {
+      it('should_parse_atom_feed', 0, () => {
+        const result = (service as any).parseAtom(MOCK_ATOM_XML);
+        expect(result.title).assertEqual('Atom 测试源');
+        expect(result.siteUrl).assertEqual('https://atom.example.com');
+        expect(result.articles.length).assertEqual(2);
+      });
+
+      it('should_parse_link_href', 0, () => {
+        const result = (service as any).parseAtom(MOCK_ATOM_XML);
+        expect(result.articles[0].url).assertEqual('https://atom.example.com/entry1');
+      });
+
+      it('should_parse_author_name', 0, () => {
+        const result = (service as any).parseAtom(MOCK_ATOM_XML);
+        expect(result.articles[0].author).assertEqual('Atom 作者');
+      });
+
+      it('should_fallback_guid_to_url', 0, () => {
+        const result = (service as any).parseAtom(MOCK_ATOM_XML);
+        expect(result.articles[1].guid).assertEqual('atom-entry-002');
+      });
+    });
+
+    // ==================== parseXml 格式检测测试 ====================
+
+    describe('parseXml Format Detection', () => {
+      it('should_detect_rss2', 0, () => {
+        const result = (service as any).parseXml(MOCK_RSS2_XML);
+        expect(result).toBeDefined();
+      });
+
+      it('should_detect_atom', 0, () => {
+        const result = (service as any).parseXml(MOCK_ATOM_XML);
+        expect(result).toBeDefined();
+      });
+
+      it('should_throw_for_invalid_format', 0, () => {
+        try {
+          (service as any).parseXml(MOCK_INVALID_XML);
+          expect(true).assertEqual(false); // Should not reach
+        } catch (e) {
+          expect((e as Error).message).assertContain('不支持的格式');
+        }
+      });
+    });
   });
 }

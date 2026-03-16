@@ -9,10 +9,11 @@ import { FeedGroup } from '../model/Models';
 @Component
 struct AddFeedPage {
   @State url: string = '';
-  @State isValidating: boolean = false;
+  @State isProcessing: boolean = false;
   @State errorMsg: string = '';
   @State previewTitle: string = '';
   @State previewDesc: string = '';
+  @State previewArticleCount: number = 0;
   @State groups: FeedGroup[] = [];
   @State selectedGroupId: number = 1;
   private uiCtx: UIContext | null = null;
@@ -29,7 +30,8 @@ struct AddFeedPage {
     }
   }
 
-  async validateAndPreview() {
+  // 合并验证和添加为一个流程
+  async addFeed() {
     const trimUrl = this.url.trim();
     if (!trimUrl) {
       this.errorMsg = '请输入RSS链接';
@@ -40,41 +42,37 @@ struct AddFeedPage {
       return;
     }
 
-    this.isValidating = true;
+    this.isProcessing = true;
     this.errorMsg = '';
-    this.previewTitle = '';
-    this.previewDesc = '';
 
     try {
+      // 获取并解析订阅源
       const info = await RssService.getInstance().fetchFeedInfo(trimUrl);
+      console.info('AddFeedPage', `Fetched feed: ${info.title}, articles: ${info.articles.length}`);
+      
+      if (!info.title && info.articles.length === 0) {
+        this.errorMsg = '解析成功但未获取到内容，请检查订阅源格式';
+        this.isProcessing = false;
+        return;
+      }
+
+      // 显示预览
       this.previewTitle = info.title || '（无标题）';
       this.previewDesc = info.description || '';
-    } catch (e) {
-      const err = e as Error;
-      this.errorMsg = `无法获取订阅源：${err?.message || String(e)}`;
-    } finally {
-      this.isValidating = false;
-    }
-  }
+      this.previewArticleCount = info.articles.length;
 
-  async addFeed() {
-    if (!this.previewTitle) {
-      await this.validateAndPreview();
-      if (this.errorMsg) return;
-    }
-
-    try {
-      const info = await RssService.getInstance().fetchFeedInfo(this.url.trim());
+      // 保存到数据库
       const db = DatabaseHelper.getInstance();
       const feedId = await db.insertFeed({
-        title: info.title || this.url,
-        url: this.url.trim(),
+        title: info.title || trimUrl,
+        url: trimUrl,
         siteUrl: info.siteUrl,
         iconUrl: info.iconUrl,
         description: info.description,
         groupId: this.selectedGroupId,
         lastUpdated: 0
       });
+      console.info('AddFeedPage', `Feed inserted with id: ${feedId}`);
 
       // 插入文章
       for (const pa of info.articles) {
@@ -93,14 +91,18 @@ struct AddFeedPage {
           coverImage: coverImage
         });
       }
+      console.info('AddFeedPage', `Inserted ${info.articles.length} articles`);
 
-      // 所有数据写入完成，回到 UI 上下文执行路由跳转
+      // 返回上一页
       this.uiCtx?.runScopedTask(() => {
         router.back();
       });
     } catch (e) {
       const err = e as Error;
+      console.error('AddFeedPage', `Error: ${err?.message || String(e)}`);
       this.errorMsg = `添加失败：${err?.message || String(e)}`;
+    } finally {
+      this.isProcessing = false;
     }
   }
 
@@ -143,7 +145,7 @@ struct AddFeedPage {
                 this.errorMsg = '';
                 this.previewTitle = '';
               })
-              .onSubmit(() => this.validateAndPreview())
+              .onSubmit(() => this.addFeed())
               .borderRadius(8)
               .backgroundColor($r('sys.color.ohos_id_color_background'))
             if (this.errorMsg) {
@@ -157,41 +159,6 @@ struct AddFeedPage {
           .padding(16)
           .backgroundColor($r('sys.color.ohos_id_color_background'))
           .borderRadius(12)
-
-          // 验证按钮
-          Button(this.isValidating ? '验证中...' : '验证链接')
-            .width('100%')
-            .fontSize(15)
-            .enabled(!this.isValidating)
-            .onClick(() => this.validateAndPreview())
-
-          // 预览
-          if (this.previewTitle) {
-            Column({ space: 8 }) {
-              Row() {
-                Image($r('app.media.ic_check'))
-                  .width(16).height(16)
-                  .fillColor(Color.Green)
-                Text('验证成功').fontSize(13).fontColor(Color.Green).margin({ left: 4 })
-              }
-              Text(this.previewTitle)
-                .fontSize(16)
-                .fontWeight(FontWeight.Medium)
-                .fontColor($r('sys.color.ohos_id_color_text_primary'))
-                .alignSelf(ItemAlign.Start)
-              if (this.previewDesc) {
-                Text(this.previewDesc)
-                  .fontSize(13)
-                  .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-                  .alignSelf(ItemAlign.Start)
-                  .maxLines(3)
-              }
-            }
-            .width('100%')
-            .padding(16)
-            .backgroundColor($r('sys.color.ohos_id_color_background'))
-            .borderRadius(12)
-          }
 
           // 分组选择
           Column({ space: 8 }) {
@@ -215,13 +182,13 @@ struct AddFeedPage {
           .backgroundColor($r('sys.color.ohos_id_color_background'))
           .borderRadius(12)
 
-          // 确认按钮
-          Button('添加订阅源')
+          // 添加按钮（合并验证和添加）
+          Button(this.isProcessing ? '添加中...' : '添加订阅源')
             .width('100%')
-            .fontSize(15)
+            .fontSize(16)
             .fontColor(Color.White)
-            .enabled(this.previewTitle !== '')
-            .opacity(this.previewTitle ? 1.0 : 0.5)
+            .enabled(!this.isProcessing && this.url.trim().length > 0)
+            .opacity((!this.isProcessing && this.url.trim().length > 0) ? 1.0 : 0.5)
             .onClick(() => this.addFeed())
         }
         .padding(16)

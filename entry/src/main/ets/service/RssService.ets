@@ -62,10 +62,12 @@ export class RssService {
           'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*'
         }
       });
+      console.info(TAG, `HTTP response code: ${response.responseCode}`);
       if (response.responseCode !== 200) {
         throw new Error(`HTTP ${response.responseCode}`);
       }
       const result = response.result as string;
+      console.info(TAG, `Fetched XML length: ${result.length}`);
       return result;
     } finally {
       httpRequest.destroy();
@@ -73,18 +75,39 @@ export class RssService {
   }
 
   private parseXml(xmlContent: string): ParsedFeedInfo {
+    console.info(TAG, `parseXml called, content length: ${xmlContent.length}`);
+    
     // 判断是 RSS 还是 Atom
-    if (xmlContent.includes('<rss') || xmlContent.includes('<channel>')) {
-      return this.parseRss2(xmlContent);
-    } else if (xmlContent.includes('<feed') && xmlContent.includes('xmlns')) {
+    // Atom: <feed xmlns="...">
+    // RSS: <rss version="..."> 或 <channel>
+    const hasFeed = xmlContent.includes('<feed');
+    const hasXmlns = xmlContent.includes('xmlns');
+    const hasRss = xmlContent.includes('<rss');
+    const hasChannel = xmlContent.includes('<channel>');
+    const hasRdf = xmlContent.includes('<rdf:RDF') || xmlContent.includes('<RDF');
+    const hasItem = xmlContent.includes('<item>');
+    const hasEntry = xmlContent.includes('<entry>');
+
+    console.info(TAG, `Format check: hasFeed=${hasFeed}, hasXmlns=${hasXmlns}, hasRss=${hasRss}, hasChannel=${hasChannel}, hasRdf=${hasRdf}, hasItem=${hasItem}, hasEntry=${hasEntry}`);
+
+    // Atom 检测：有 feed 标签且有 xmlns 命名空间，或者有 entry 标签
+    if ((hasFeed && hasXmlns) || hasEntry) {
+      console.info(TAG, 'Detected Atom format');
       return this.parseAtom(xmlContent);
     }
+    // RSS 2.0 或 RDF/RSS 1.0
+    if (hasRss || hasChannel || hasRdf || hasItem) {
+      console.info(TAG, 'Detected RSS format');
+      return this.parseRss2(xmlContent);
+    }
+    console.error(TAG, 'Unknown format');
     throw new Error('不支持的格式：无法识别RSS或Atom');
   }
 
   private stringToArrayBuffer(str: string): ArrayBuffer {
     const encoder = new util.TextEncoder();
-    return encoder.encodeInto(str).buffer as ArrayBuffer;
+    const uint8Array = encoder.encodeInto(str);
+    return uint8Array.buffer as ArrayBuffer;
   }
 
   private parseRss2(xmlContent: string): ParsedFeedInfo {
@@ -99,21 +122,20 @@ export class RssService {
     try {
       const buffer = this.stringToArrayBuffer(xmlContent);
       const parser = new xml.XmlPullParser(buffer, 'utf-8');
-
-      let currentTag = '';
+      let currentTag: string = '';
       let tagStack: string[] = [];
       let currentArticle: ParsedArticle | null = null;
-      let inChannel = false;
-      let inItem = false;
-      let textBuffer = '';
+      let inChannel: boolean = false;
+      let inItem: boolean = false;
+      let textBuffer: string = '';
       // 用于暂存 enclosure 属性
-      let pendingEnclosureType = '';
-      let pendingEnclosureUrl = '';
+      let pendingEnclosureType: string = '';
+      let pendingEnclosureUrl: string = '';
 
       const options: xml.ParseOptions = {
         supportDoctype: false,
         ignoreNameSpace: true,
-        // 通过属性回调安全地读取 enclosure 的 type 和 url
+        // 使用 attributeWithTagCallbackFunction 获取属性（SDK 20+）
         attributeWithTagCallbackFunction: (tagName: string, key: string, value: string): boolean => {
           if (tagName === 'enclosure') {
             if (key === 'type') pendingEnclosureType = value;
@@ -126,6 +148,7 @@ export class RssService {
             currentTag = value.getName();
             tagStack.push(currentTag);
             textBuffer = '';
+
             if (currentTag === 'channel') inChannel = true;
             if (currentTag === 'item') {
               inItem = true;
@@ -136,7 +159,6 @@ export class RssService {
             }
             // enclosure 的属性已由 attributeWithTagCallbackFunction 收集
             if (currentTag === 'enclosure' && currentArticle) {
-              // 属性回调先于 tokenValueCallback 触发，此时可直接使用
               if (pendingEnclosureType.startsWith('image/') && pendingEnclosureUrl) {
                 currentArticle.coverImage = pendingEnclosureUrl;
               }
@@ -147,8 +169,8 @@ export class RssService {
             // TEXT：普通文本；CDSECT：<![CDATA[...]]> 内容，两者都累积到 buffer
             textBuffer += value.getText();
           } else if (eventType === xml.EventType.END_TAG) {
-            const tag = value.getName();
-            const text = textBuffer.trim();
+            const tag: string = value.getName();
+            const text: string = textBuffer.trim();
             tagStack.pop();
 
             if (inItem && currentArticle) {
@@ -175,6 +197,9 @@ export class RssService {
                 case 'title': if (!info.title) info.title = text; break;
                 case 'link': if (!info.siteUrl) info.siteUrl = text; break;
                 case 'description': if (!info.description) info.description = text; break;
+                case 'channel':
+                  inChannel = false;
+                  break;
               }
             }
             textBuffer = '';
@@ -200,21 +225,20 @@ export class RssService {
     };
 
     try {
+      // 直接解析 XML，在 START_TAG 中读取 link 的属性
       const buffer = this.stringToArrayBuffer(xmlContent);
       const parser = new xml.XmlPullParser(buffer, 'utf-8');
-
-      let currentTag = '';
+      let inEntry: boolean = false;
       let currentArticle: ParsedArticle | null = null;
-      let inEntry = false;
-      let textBuffer = '';
-      // 用于暂存 link 属性（自闭合标签处理）
-      let pendingLinkRel = '';
-      let pendingLinkHref = '';
+      let textBuffer: string = '';
+      // 用于暂存 link 标签的属性
+      let pendingLinkRel: string = '';
+      let pendingLinkHref: string = '';
 
       const options: xml.ParseOptions = {
         supportDoctype: false,
         ignoreNameSpace: true,
-        // 通过属性回调安全地读取 <link> 的 rel 和 href
+        // 使用 attributeWithTagCallbackFunction 获取属性（SDK 20+）
         attributeWithTagCallbackFunction: (tagName: string, key: string, value: string): boolean => {
           if (tagName === 'link') {
             if (key === 'rel') pendingLinkRel = value;
@@ -224,65 +248,103 @@ export class RssService {
         },
         tokenValueCallbackFunction: (eventType: xml.EventType, value: xml.ParseInfo): boolean => {
           if (eventType === xml.EventType.START_TAG) {
-            currentTag = value.getName();
+            const rawName: string = value.getName();
+            const tagName: string = rawName.includes(':') ? rawName.split(':')[1] : rawName;
             textBuffer = '';
-            if (currentTag === 'entry') {
+
+            console.info(TAG, `START_TAG: ${tagName}, inEntry=${inEntry}`);
+
+            if (tagName === 'entry') {
               inEntry = true;
               currentArticle = {
                 guid: '', title: '', summary: '', content: '',
                 url: '', author: '', publishedAt: 0, coverImage: ''
               };
             }
-          } else if (eventType === xml.EventType.TEXT || eventType === xml.EventType.CDSECT) {
-            // TEXT：普通文本；CDSECT：<![CDATA[...]]> 内容，两者都累积到 buffer
-            textBuffer += value.getText();
-          } else if (eventType === xml.EventType.END_TAG) {
-            const tag = value.getName();
-            const text = textBuffer.trim();
+            // 处理 link 标签 - 属性已由 attributeWithTagCallbackFunction 收集
+            if (tagName === 'link') {
+              const rel: string = pendingLinkRel || 'alternate';
+              const href: string = pendingLinkHref;
 
-            // 处理 <link> 标签（自闭合标签也会触发 END_TAG）
-            if (tag === 'link') {
-              // 如果没有 rel 属性，默认为 'alternate'
-              const linkRel = pendingLinkRel || 'alternate';
-              if (inEntry && currentArticle && (linkRel === 'alternate' || linkRel === '')) {
-                currentArticle.url = pendingLinkHref;
-              } else if (!inEntry && (linkRel === 'alternate' || linkRel === '')) {
-                if (!info.siteUrl) info.siteUrl = pendingLinkHref;
+              if (href) {
+                console.info(TAG, `  -> Link: rel="${rel}", href="${href}"`);
+
+                if (inEntry && currentArticle) {
+                  if (rel === 'alternate' && !currentArticle.url) {
+                    currentArticle.url = href;
+                    console.info(TAG, `  -> Set article URL: ${href}`);
+                  }
+                } else if (!inEntry) {
+                  if (rel === 'alternate' && !info.siteUrl) {
+                    info.siteUrl = href;
+                    console.info(TAG, `  -> Set site URL: ${href}`);
+                  }
+                }
               }
-              // 重置，为下一个 <link> 做准备
+              // 重置暂存的属性
               pendingLinkRel = '';
               pendingLinkHref = '';
             }
+          } else if (eventType === xml.EventType.TEXT || eventType === xml.EventType.CDSECT) {
+            textBuffer += value.getText() || '';
+          } else if (eventType === xml.EventType.END_TAG) {
+            const rawName: string = value.getName();
+            const tagName: string = rawName.includes(':') ? rawName.split(':')[1] : rawName;
+            const text: string = textBuffer.trim();
 
             if (inEntry && currentArticle) {
-              switch (tag) {
-                case 'title': currentArticle.title = this.stripHtml(text); break;
-                case 'id': if (!currentArticle.guid) currentArticle.guid = text; break;
-                case 'summary': currentArticle.summary = this.stripHtml(text).slice(0, 300); break;
-                case 'content': currentArticle.content = text; break;
-                case 'name': if (!currentArticle.author) currentArticle.author = text; break;
+              switch (tagName) {
+                case 'title':
+                  currentArticle.title = this.stripHtml(text);
+                  console.info(TAG, `  -> Article title: ${currentArticle.title}`);
+                  break;
+                case 'id':
+                  if (!currentArticle.guid) currentArticle.guid = text;
+                  break;
+                case 'summary':
+                  currentArticle.summary = this.stripHtml(text).slice(0, 300);
+                  break;
+                case 'content':
+                  currentArticle.content = text;
+                  break;
+                case 'name':
+                  if (!currentArticle.author) currentArticle.author = text;
+                  break;
                 case 'updated':
-                case 'published': if (!currentArticle.publishedAt) currentArticle.publishedAt = this.parseDate(text); break;
+                case 'published':
+                  if (!currentArticle.publishedAt) currentArticle.publishedAt = this.parseDate(text);
+                  break;
                 case 'entry':
                   if (!currentArticle.guid) currentArticle.guid = currentArticle.url || currentArticle.title;
                   if (!currentArticle.content) currentArticle.content = `<p>${currentArticle.summary}</p>`;
+                  if (!currentArticle.summary) currentArticle.summary = currentArticle.title;
                   info.articles.push(currentArticle);
+                  console.info(TAG, `  -> Completed article: "${currentArticle.title}" url="${currentArticle.url}"`);
                   currentArticle = null;
                   inEntry = false;
                   break;
               }
             } else if (!inEntry) {
-              switch (tag) {
-                case 'title': if (!info.title) info.title = this.stripHtml(text); break;
-                case 'subtitle': if (!info.description) info.description = text; break;
+              switch (tagName) {
+                case 'title':
+                  if (!info.title) {
+                    info.title = this.stripHtml(text);
+                    console.info(TAG, `  -> Feed title: ${info.title}`);
+                  }
+                  break;
+                case 'subtitle':
+                  if (!info.description) info.description = text;
+                  break;
               }
             }
+
             textBuffer = '';
           }
           return true;
         }
       };
       parser.parse(options);
+      console.info(TAG, `=== RESULT: ${info.articles.length} articles, title="${info.title}", siteUrl="${info.siteUrl}" ===`);
     } catch (e) {
       console.error(TAG, `Atom parse error: ${e}`);
     }
