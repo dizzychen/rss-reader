@@ -2,7 +2,7 @@ import { http } from '@kit.NetworkKit';
 import { xml, util } from '@kit.ArkTS';
 import { Feed, Article } from '../model/Models';
 
-const TAG = 'RssParser';
+const TAG = 'RssService';
 
 export interface ParsedFeedInfo {
   title: string;
@@ -23,6 +23,17 @@ export interface ParsedArticle {
   coverImage: string;
 }
 
+interface EnclosureData {
+  type: string;
+  url: string;
+}
+
+interface LinkData {
+  rel: string;
+  href: string;
+  inEntry: boolean;
+}
+
 export class RssService {
   private static instance: RssService;
 
@@ -34,7 +45,7 @@ export class RssService {
   }
 
   /**
-   * 验证并获取RSS源基本信息（用于添加订阅时的预览）
+   * 验证并获取 RSS 源基本信息（用于添加订阅时的预览）
    */
   async fetchFeedInfo(url: string): Promise<ParsedFeedInfo> {
     const xmlContent = await this.fetchXml(url);
@@ -76,10 +87,8 @@ export class RssService {
 
   private parseXml(xmlContent: string): ParsedFeedInfo {
     console.info(TAG, `parseXml called, content length: ${xmlContent.length}`);
-    
+
     // 判断是 RSS 还是 Atom
-    // Atom: <feed xmlns="...">
-    // RSS: <rss version="..."> 或 <channel>
     const hasFeed = xmlContent.includes('<feed');
     const hasXmlns = xmlContent.includes('xmlns');
     const hasRss = xmlContent.includes('<rss');
@@ -88,7 +97,8 @@ export class RssService {
     const hasItem = xmlContent.includes('<item>');
     const hasEntry = xmlContent.includes('<entry>');
 
-    console.info(TAG, `Format check: hasFeed=${hasFeed}, hasXmlns=${hasXmlns}, hasRss=${hasRss}, hasChannel=${hasChannel}, hasRdf=${hasRdf}, hasItem=${hasItem}, hasEntry=${hasEntry}`);
+    console.info(TAG,
+      `Format check: hasFeed=${hasFeed}, hasXmlns=${hasXmlns}, hasRss=${hasRss}, hasChannel=${hasChannel}, hasRdf=${hasRdf}, hasItem=${hasItem}, hasEntry=${hasEntry}`);
 
     // Atom 检测：有 feed 标签且有 xmlns 命名空间，或者有 entry 标签
     if ((hasFeed && hasXmlns) || hasEntry) {
@@ -101,13 +111,70 @@ export class RssService {
       return this.parseRss2(xmlContent);
     }
     console.error(TAG, 'Unknown format');
-    throw new Error('不支持的格式：无法识别RSS或Atom');
+    throw new Error('不支持的格式：无法识别 RSS 或 Atom');
   }
 
   private stringToArrayBuffer(str: string): ArrayBuffer {
     const encoder = new util.TextEncoder();
     const uint8Array = encoder.encodeInto(str);
     return uint8Array.buffer as ArrayBuffer;
+  }
+
+  /**
+   * 从 XML 字符串中提取 enclosure 标签的属性
+   */
+  private extractEnclosures(xmlContent: string): Map<string, EnclosureData> {
+    const enclosureMap = new Map<string, EnclosureData>();
+    const enclosureRegex = /<enclosure\s+([^>]*?)\s*\/?>/gi;
+    let enclosureMatch: RegExpExecArray | null;
+    let enclosureIndex = 0;
+
+    while ((enclosureMatch = enclosureRegex.exec(xmlContent)) !== null) {
+      const attrs = enclosureMatch[1];
+      const typeMatch = attrs.match(/type\s*=\s*["']([^"']+)["']/i);
+      const urlMatch = attrs.match(/url\s*=\s*["']([^"']+)["']/i);
+
+      if (typeMatch || urlMatch) {
+        enclosureMap.set(`enclosure-${enclosureIndex}`, {
+          type: typeMatch ? typeMatch[1] : '',
+          url: urlMatch ? urlMatch[1] : ''
+        });
+        enclosureIndex++;
+      }
+    }
+
+    return enclosureMap;
+  }
+
+  /**
+   * 从 XML 字符串中提取 link 标签的属性
+   */
+  private extractLinks(xmlContent: string): LinkData[] {
+    const allLinks: LinkData[] = [];
+    const fullLinkRegex = /<link\s+([^>]*?)\s*\/?>/gi;
+    let linkMatch: RegExpExecArray | null;
+
+    while ((linkMatch = fullLinkRegex.exec(xmlContent)) !== null) {
+      const attrs = linkMatch[1];
+      const relMatch = attrs.match(/rel\s*=\s*["']([^"']+)["']/i);
+      const hrefMatch = attrs.match(/href\s*=\s*["']([^"']+)["']/i);
+
+      // 判断是否在 entry 标签内
+      const linkStartPos = linkMatch.index;
+      const beforeLink = xmlContent.substring(0, linkStartPos);
+      const entryOpens = (beforeLink.match(/<entry>/g) || []).length;
+      const entryCloses = (beforeLink.match(/<\/entry>/g) || []).length;
+      const checkInEntry = entryOpens > entryCloses;
+
+      const rel = relMatch ? relMatch[1] : 'alternate';
+      const href = hrefMatch ? hrefMatch[1] : '';
+
+      if (href) {
+        allLinks.push({ rel, href, inEntry: checkInEntry });
+      }
+    }
+
+    return allLinks;
   }
 
   private parseRss2(xmlContent: string): ParsedFeedInfo {
@@ -121,22 +188,7 @@ export class RssService {
 
     try {
       // 预先解析 enclosure 标签的属性
-      const enclosureMap = new Map<string, { type: string; url: string }>();
-      const enclosureRegex = /<enclosure\s+([^>]*?)\s*\/?>/gi;
-      let enclosureMatch: RegExpExecArray | null;
-      let enclosureIndex = 0;
-      while ((enclosureMatch = enclosureRegex.exec(xmlContent)) !== null) {
-        const attrs = enclosureMatch[1];
-        const typeMatch = attrs.match(/type\s*=\s*["']([^"']+)["']/i);
-        const urlMatch = attrs.match(/url\s*=\s*["']([^"']+)["']/i);
-        if (typeMatch || urlMatch) {
-          enclosureMap.set(`enclosure-${enclosureIndex}`, {
-            type: typeMatch ? typeMatch[1] : '',
-            url: urlMatch ? urlMatch[1] : ''
-          });
-          enclosureIndex++;
-        }
-      }
+      const enclosureMap = this.extractEnclosures(xmlContent);
 
       const buffer = this.stringToArrayBuffer(xmlContent);
       const parser = new xml.XmlPullParser(buffer, 'utf-8');
@@ -157,12 +209,20 @@ export class RssService {
             tagStack.push(currentTag);
             textBuffer = '';
 
-            if (currentTag === 'channel') inChannel = true;
+            if (currentTag === 'channel') {
+              inChannel = true;
+            }
             if (currentTag === 'item') {
               inItem = true;
               currentArticle = {
-                guid: '', title: '', summary: '', content: '',
-                url: '', author: '', publishedAt: 0, coverImage: ''
+                guid: '',
+                title: '',
+                summary: '',
+                content: '',
+                url: '',
+                author: '',
+                publishedAt: 0,
+                coverImage: ''
               };
             }
             // 处理 enclosure 标签
@@ -176,7 +236,6 @@ export class RssService {
               }
             }
           } else if (eventType === xml.EventType.TEXT || eventType === xml.EventType.CDSECT) {
-            // TEXT：普通文本；CDSECT：<![CDATA[...]]> 内容，两者都累积到 buffer
             textBuffer += value.getText();
           } else if (eventType === xml.EventType.END_TAG) {
             const tag: string = value.getName();
@@ -185,30 +244,61 @@ export class RssService {
 
             if (inItem && currentArticle) {
               switch (tag) {
-                case 'title': currentArticle.title = text; break;
-                case 'link': if (!currentArticle.url) currentArticle.url = text; break;
-                case 'guid': currentArticle.guid = text; break;
-                case 'description': currentArticle.summary = this.stripHtml(text).slice(0, 300); break;
+                case 'title':
+                  currentArticle.title = text;
+                  break;
+                case 'link':
+                  if (!currentArticle.url) {
+                    currentArticle.url = text;
+                  }
+                  break;
+                case 'guid':
+                  currentArticle.guid = text;
+                  break;
+                case 'description':
+                  currentArticle.summary = this.stripHtml(text).slice(0, 300);
+                  break;
                 case 'content:encoded':
-                case 'encoded': currentArticle.content = text; break;
+                case 'encoded':
+                  currentArticle.content = text;
+                  break;
                 case 'author':
-                case 'dc:creator': currentArticle.author = text; break;
-                case 'pubDate': currentArticle.publishedAt = this.parseDate(text); break;
+                case 'dc:creator':
+                  currentArticle.author = text;
+                  break;
+                case 'pubDate':
+                  currentArticle.publishedAt = this.parseDate(text);
+                  break;
                 case 'item':
-                  if (!currentArticle.guid) currentArticle.guid = currentArticle.url || currentArticle.title;
-                  if (!currentArticle.content) currentArticle.content = `<p>${currentArticle.summary}</p>`;
+                  if (!currentArticle.guid) {
+                    currentArticle.guid = currentArticle.url || currentArticle.title;
+                  }
+                  if (!currentArticle.content) {
+                    currentArticle.content = `<p>${currentArticle.summary}</p>`;
+                  }
                   info.articles.push(currentArticle);
                   currentArticle = null;
                   inItem = false;
-                  // 重置 enclosure 计数器
                   enclosureCounter = 0;
                   break;
               }
             } else if (inChannel && !inItem) {
               switch (tag) {
-                case 'title': if (!info.title) info.title = text; break;
-                case 'link': if (!info.siteUrl) info.siteUrl = text; break;
-                case 'description': if (!info.description) info.description = text; break;
+                case 'title':
+                  if (!info.title) {
+                    info.title = text;
+                  }
+                  break;
+                case 'link':
+                  if (!info.siteUrl) {
+                    info.siteUrl = text;
+                  }
+                  break;
+                case 'description':
+                  if (!info.description) {
+                    info.description = text;
+                  }
+                  break;
                 case 'channel':
                   inChannel = false;
                   break;
@@ -239,39 +329,7 @@ export class RssService {
 
     try {
       // 预先解析所有 link 标签的属性
-      interface LinkData { rel: string; href: string; inEntry: boolean; }
-      const allLinks: LinkData[] = [];
-      const linkRegex = /<link\s+([^>]*)\/?>/gi;
-      let linkMatch: RegExpExecArray | null;
-      let depth = 0;
-      let inEntryCheck = false;
-      const lines = xmlContent.split('\n');
-      let entryDepth = -1;
-
-      // 使用简单方法：按顺序提取 link 标签及其属性
-      const fullLinkRegex = /<link\s+([^>]*?)\s*\/?>/gi;
-      let currentPos = 0;
-      let checkInEntry = false;
-
-      while ((linkMatch = fullLinkRegex.exec(xmlContent)) !== null) {
-        const attrs = linkMatch[1];
-        const relMatch = attrs.match(/rel\s*=\s*["']([^"']+)["']/i);
-        const hrefMatch = attrs.match(/href\s*=\s*["']([^"']+)["']/i);
-
-        // 判断是否在 entry 标签内
-        const linkStartPos = linkMatch.index;
-        const beforeLink = xmlContent.substring(0, linkStartPos);
-        const entryOpens = (beforeLink.match(/<entry>/g) || []).length;
-        const entryCloses = (beforeLink.match(/<\/entry>/g) || []).length;
-        checkInEntry = entryOpens > entryCloses;
-
-        const rel = relMatch ? relMatch[1] : 'alternate';
-        const href = hrefMatch ? hrefMatch[1] : '';
-
-        if (href) {
-          allLinks.push({ rel, href, inEntry: checkInEntry });
-        }
-      }
+      const allLinks = this.extractLinks(xmlContent);
 
       const buffer = this.stringToArrayBuffer(xmlContent);
       const parser = new xml.XmlPullParser(buffer, 'utf-8');
@@ -292,8 +350,14 @@ export class RssService {
             if (tagName === 'entry') {
               inEntry = true;
               currentArticle = {
-                guid: '', title: '', summary: '', content: '',
-                url: '', author: '', publishedAt: 0, coverImage: ''
+                guid: '',
+                title: '',
+                summary: '',
+                content: '',
+                url: '',
+                author: '',
+                publishedAt: 0,
+                coverImage: ''
               };
             }
             // 处理 link 标签 - 使用预提取的数据
@@ -324,7 +388,9 @@ export class RssService {
                   currentArticle.title = this.stripHtml(text);
                   break;
                 case 'id':
-                  if (!currentArticle.guid) currentArticle.guid = text;
+                  if (!currentArticle.guid) {
+                    currentArticle.guid = text;
+                  }
                   break;
                 case 'summary':
                   currentArticle.summary = this.stripHtml(text).slice(0, 300);
@@ -333,16 +399,26 @@ export class RssService {
                   currentArticle.content = text;
                   break;
                 case 'name':
-                  if (!currentArticle.author) currentArticle.author = text;
+                  if (!currentArticle.author) {
+                    currentArticle.author = text;
+                  }
                   break;
                 case 'updated':
                 case 'published':
-                  if (!currentArticle.publishedAt) currentArticle.publishedAt = this.parseDate(text);
+                  if (!currentArticle.publishedAt) {
+                    currentArticle.publishedAt = this.parseDate(text);
+                  }
                   break;
                 case 'entry':
-                  if (!currentArticle.guid) currentArticle.guid = currentArticle.url || currentArticle.title;
-                  if (!currentArticle.content) currentArticle.content = `<p>${currentArticle.summary}</p>`;
-                  if (!currentArticle.summary) currentArticle.summary = currentArticle.title;
+                  if (!currentArticle.guid) {
+                    currentArticle.guid = currentArticle.url || currentArticle.title;
+                  }
+                  if (!currentArticle.content) {
+                    currentArticle.content = `<p>${currentArticle.summary}</p>`;
+                  }
+                  if (!currentArticle.summary) {
+                    currentArticle.summary = currentArticle.title;
+                  }
                   info.articles.push(currentArticle);
                   currentArticle = null;
                   inEntry = false;
@@ -356,7 +432,9 @@ export class RssService {
                   }
                   break;
                 case 'subtitle':
-                  if (!info.description) info.description = text;
+                  if (!info.description) {
+                    info.description = text;
+                  }
                   break;
               }
             }
@@ -376,14 +454,20 @@ export class RssService {
   }
 
   private stripHtml(html: string): string {
-    return html.replace(/<[^>]+>/g, '').replace(/&amp;/g, '&')
-      .replace(/&lt;/g, '<').replace(/&gt;/g, '>')
-      .replace(/&quot;/g, '"').replace(/&#39;/g, "'")
-      .replace(/&nbsp;/g, ' ').trim();
+    return html.replace(/<[^>]+>/g, '')
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&#39;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .trim();
   }
 
   private parseDate(dateStr: string): number {
-    if (!dateStr) return Date.now();
+    if (!dateStr) {
+      return Date.now();
+    }
     try {
       const d = new Date(dateStr);
       return isNaN(d.getTime()) ? Date.now() : d.getTime();
@@ -393,7 +477,7 @@ export class RssService {
   }
 
   /**
-   * 从文章HTML内容中提取第一张图片作为封面
+   * 从文章 HTML 内容中提取第一张图片作为封面
    */
   extractFirstImage(html: string): string {
     const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
@@ -410,12 +494,21 @@ export class RssService {
     const hour = 60 * minute;
     const day = 24 * hour;
 
-    if (diff < minute) return '刚刚';
-    if (diff < hour) return `${Math.floor(diff / minute)}分钟前`;
-    if (diff < day) return `${Math.floor(diff / hour)}小时前`;
-    if (diff < 7 * day) return `${Math.floor(diff / day)}天前`;
+    if (diff < minute) {
+      return '刚刚';
+    }
+    if (diff < hour) {
+      return `${Math.floor(diff / minute)}分钟前`;
+    }
+    if (diff < day) {
+      return `${Math.floor(diff / hour)}小时前`;
+    }
+    if (diff < 7 * day) {
+      return `${Math.floor(diff / day)}天前`;
+    }
 
     const date = new Date(timestamp);
-    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate()).padStart(2, '0')}`;
+    return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate())
+      .padStart(2, '0')}`;
   }
 }
