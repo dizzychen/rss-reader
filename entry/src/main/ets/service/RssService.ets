@@ -1,6 +1,6 @@
 import { http } from '@kit.NetworkKit';
 import { Feed, Article } from '../model/Models';
-import parser from 'fast-xml-parser';
+import { XMLParser } from 'fast-xml-parser';
 
 const TAG = 'RssService';
 
@@ -90,12 +90,16 @@ export class RssService {
         alwaysCreateTextNode: false
       };
 
-      const result = parser.parse(xmlContent, options);
-      console.info(TAG, `Parsed result: ${JSON.stringify(result)}`);
+      const parser = new XMLParser(options);
+      const result = parser.parse(xmlContent);
+      console.info(TAG, `Parsed result keys: ${Object.keys(result)}`);
 
       // 检测并解析 RSS 2.0
-      if (result.rss && result.rss.channel) {
-        return this.parseRss2(result.rss.channel);
+      if (result.rss) {
+        const rss = result.rss as Record<string, Object>;
+        if (rss.channel) {
+          return this.parseRss2(rss.channel);
+        }
       }
 
       // 检测并解析 Atom
@@ -116,44 +120,86 @@ export class RssService {
     }
   }
 
-  private parseRss2(channel: any): ParsedFeedInfo {
+  private getStringValue(obj: Object, key: string): string {
+    const record = obj as Record<string, Object>;
+    const val = record[key];
+    if (typeof val === 'string') {
+      return val;
+    }
+    if (val) {
+      const valRecord = val as Record<string, string>;
+      return valRecord['#text'] || valRecord.href || valRecord.toString();
+    }
+    return '';
+  }
+
+  private getOptionalString(obj: Object, key: string): string {
+    const record = obj as Record<string, Object>;
+    const val = record[key];
+    if (!val) {
+      return '';
+    }
+    if (typeof val === 'string') {
+      return val;
+    }
+    const valRecord = val as Record<string, string>;
+    return valRecord['#text'] || valRecord.href || '';
+  }
+
+  private parseRss2(channel: Object): ParsedFeedInfo {
     const info: ParsedFeedInfo = {
-      title: channel.title || '',
-      siteUrl: channel.link || '',
-      description: channel.description || '',
+      title: this.getOptionalString(channel, 'title'),
+      siteUrl: this.getOptionalString(channel, 'link'),
+      description: this.getOptionalString(channel, 'description'),
       iconUrl: '',
       articles: []
     };
 
-    // 处理 channel.link 可能是对象的情况
-    if (channel.link && typeof channel.link === 'object') {
-      info.siteUrl = channel.link['#text'] || channel.link.href || '';
-    }
+    const channelRecord = channel as Record<string, Object>;
+    const itemsObj = channelRecord['item'];
+    const items: Object[] = Array.isArray(itemsObj) ? itemsObj : (itemsObj ? [itemsObj] : []);
 
-    const items = channel.item || [];
-    const itemsArray = Array.isArray(items) ? items : [items];
-
-    for (const item of itemsArray) {
-      const article: ParsedArticle = {
-        guid: item.guid || item.link || item.title || '',
-        title: item.title || '',
-        summary: this.stripHtml(item.description || '').slice(0, 300),
-        content: item['content:encoded'] || item.encoded || `<p>${item.description || ''}</p>`,
-        url: item.link || '',
-        author: item.author || item['dc:creator'] || '',
-        publishedAt: this.parseDate(item.pubDate || ''),
-        coverImage: ''
-      };
+    for (const item of items) {
+      const itemRecord = item as Record<string, Object>;
+      const enclosureObj = itemRecord['enclosure'];
+      let coverImage = '';
 
       // 处理 enclosure 标签（RSS 标准图片）
-      if (item.enclosure) {
-        const enclosure = Array.isArray(item.enclosure) ? item.enclosure[0] : item.enclosure;
-        const enclosureType = enclosure['@_type'] || '';
-        const enclosureUrl = enclosure['@_url'] || '';
-        if (enclosureType.startsWith('image/') && enclosureUrl) {
-          article.coverImage = enclosureUrl;
+      if (enclosureObj) {
+        const enclosure = Array.isArray(enclosureObj) ? enclosureObj[0] : enclosureObj;
+        const enclosureRecord = enclosure as Record<string, string>;
+        const enclosureType = enclosureRecord['@_type'] || '';
+        const enclosureUrl = enclosureRecord['@_url'] || '';
+        if (enclosureType && enclosureType.startsWith('image/') && enclosureUrl) {
+          coverImage = enclosureUrl;
         }
       }
+
+      const contentRaw = itemRecord['content:encoded'] || itemRecord['encoded'] || '';
+      const contentStr = typeof contentRaw === 'string' ? contentRaw : (contentRaw as Record<string, string>)['#text'] || '';
+      const descriptionRaw = itemRecord['description'] || '';
+      const descriptionStr = typeof descriptionRaw === 'string' ? descriptionRaw : (descriptionRaw as Record<string, string>)['#text'] || '';
+      const linkRaw = itemRecord['link'] || '';
+      const linkStr = typeof linkRaw === 'string' ? linkRaw : (linkRaw as Record<string, string>)['#text'] || '';
+      const guidRaw = itemRecord['guid'] || linkRaw || itemRecord['title'] || '';
+      const guidStr = typeof guidRaw === 'string' ? guidRaw : (guidRaw as Record<string, string>)['#text'] || '';
+      const titleRaw = itemRecord['title'] || '';
+      const titleStr = typeof titleRaw === 'string' ? titleRaw : (titleRaw as Record<string, string>)['#text'] || '';
+      const authorRaw = itemRecord['author'] || itemRecord['dc:creator'] || '';
+      const authorStr = typeof authorRaw === 'string' ? authorRaw : (authorRaw as Record<string, string>)['#text'] || '';
+      const pubDateRaw = itemRecord['pubDate'] || '';
+      const pubDateStr = typeof pubDateRaw === 'string' ? pubDateRaw : (pubDateRaw as Record<string, string>)['#text'] || '';
+
+      const article: ParsedArticle = {
+        guid: guidStr || linkStr || titleStr,
+        title: titleStr,
+        summary: this.stripHtml(descriptionStr).slice(0, 300),
+        content: contentStr || `<p>${descriptionStr}</p>`,
+        url: linkStr,
+        author: authorStr,
+        publishedAt: this.parseDate(pubDateStr),
+        coverImage: coverImage
+      };
 
       // 从 content 中提取第一张图片作为封面
       if (!article.coverImage && article.content) {
@@ -167,59 +213,81 @@ export class RssService {
     return info;
   }
 
-  private parseAtom(feed: any): ParsedFeedInfo {
+  private parseAtom(feed: Object): ParsedFeedInfo {
+    const feedRecord = feed as Record<string, Object>;
+
     const info: ParsedFeedInfo = {
-      title: feed.title || '',
+      title: this.getOptionalString(feed, 'title'),
       siteUrl: '',
-      description: feed.subtitle || '',
+      description: this.getOptionalString(feed, 'subtitle'),
       iconUrl: '',
       articles: []
     };
 
     // 处理 feed link
-    if (feed.link) {
-      const links = Array.isArray(feed.link) ? feed.link : [feed.link];
+    const linkObj = feedRecord['link'];
+    if (linkObj) {
+      const links: Object[] = Array.isArray(linkObj) ? linkObj : [linkObj];
       for (const link of links) {
-        const rel = link['@_rel'] || 'alternate';
-        const href = link['@_href'] || link['#text'] || link.href || '';
+        const linkRec = link as Record<string, string>;
+        const rel = linkRec['@_rel'] || 'alternate';
+        const href = linkRec['@_href'] || linkRec['#text'] || linkRec.href || '';
         if (rel === 'alternate' && !info.siteUrl) {
           info.siteUrl = href;
         }
       }
     }
 
-    const entries = feed.entry || [];
-    const entriesArray = Array.isArray(entries) ? entries : [entries];
+    const entriesObj = feedRecord['entry'];
+    const entries: Object[] = Array.isArray(entriesObj) ? entriesObj : (entriesObj ? [entriesObj] : []);
 
-    for (const entry of entriesArray) {
-      const article: ParsedArticle = {
-        guid: entry.id || entry.link || entry.title || '',
-        title: this.stripHtml(entry.title || ''),
-        summary: this.stripHtml(entry.summary || entry.title || '').slice(0, 300),
-        content: entry.content || `<p>${entry.summary || entry.title || ''}</p>`,
-        url: '',
-        author: '',
-        publishedAt: this.parseDate(entry.updated || entry.published || ''),
-        coverImage: ''
-      };
+    for (const entry of entries) {
+      const entryRecord = entry as Record<string, Object>;
 
       // 处理 entry link
-      if (entry.link) {
-        const links = Array.isArray(entry.link) ? entry.link : [entry.link];
-        for (const link of links) {
-          const rel = link['@_rel'] || 'alternate';
-          const href = link['@_href'] || link['#text'] || link.href || '';
-          if (rel === 'alternate' && !article.url) {
-            article.url = href;
+      let url = '';
+      const entryLinkObj = entryRecord['link'];
+      if (entryLinkObj) {
+        const entryLinks: Object[] = Array.isArray(entryLinkObj) ? entryLinkObj : [entryLinkObj];
+        for (const link of entryLinks) {
+          const linkRec = link as Record<string, string>;
+          const rel = linkRec['@_rel'] || 'alternate';
+          const href = linkRec['@_href'] || linkRec['#text'] || linkRec.href || '';
+          if (rel === 'alternate' && !url) {
+            url = href;
           }
         }
       }
 
       // 处理作者
-      if (entry.author) {
-        const author = entry.author;
-        article.author = author.name || author['#text'] || '';
+      let author = '';
+      const authorObj = entryRecord['author'];
+      if (authorObj) {
+        const authorRec = authorObj as Record<string, string>;
+        author = authorRec.name || authorRec['#text'] || '';
       }
+
+      const titleRaw = entryRecord['title'] || '';
+      const titleStr = typeof titleRaw === 'string' ? titleRaw : (titleRaw as Record<string, string>)['#text'] || '';
+      const summaryRaw = entryRecord['summary'] || '';
+      const summaryStr = typeof summaryRaw === 'string' ? summaryRaw : (summaryRaw as Record<string, string>)['#text'] || '';
+      const contentRaw = entryRecord['content'] || '';
+      const contentStr = typeof contentRaw === 'string' ? contentRaw : (contentRaw as Record<string, string>)['#text'] || '';
+      const idRaw = entryRecord['id'] || '';
+      const idStr = typeof idRaw === 'string' ? idRaw : (idRaw as Record<string, string>)['#text'] || '';
+      const updatedRaw = entryRecord['updated'] || entryRecord['published'] || '';
+      const updatedStr = typeof updatedRaw === 'string' ? updatedRaw : (updatedRaw as Record<string, string>)['#text'] || '';
+
+      const article: ParsedArticle = {
+        guid: idStr || url || titleStr,
+        title: this.stripHtml(titleStr),
+        summary: this.stripHtml(summaryStr || titleStr).slice(0, 300),
+        content: contentStr || `<p>${summaryStr || titleStr}</p>`,
+        url: url,
+        author: author,
+        publishedAt: this.parseDate(updatedStr),
+        coverImage: ''
+      };
 
       // 从 content 中提取第一张图片作为封面
       if (!article.coverImage && article.content) {
@@ -233,7 +301,9 @@ export class RssService {
     return info;
   }
 
-  private parseRdf(rdf: any): ParsedFeedInfo {
+  private parseRdf(rdf: Object): ParsedFeedInfo {
+    const rdfRecord = rdf as Record<string, Object>;
+
     const info: ParsedFeedInfo = {
       title: '',
       siteUrl: '',
@@ -243,23 +313,28 @@ export class RssService {
     };
 
     // RDF/RSS 1.0 格式
-    const channel = rdf.channel || {};
-    info.title = channel.title || '';
-    info.siteUrl = channel.link || '';
-    info.description = channel.description || '';
+    const channelObj = rdfRecord['channel'];
+    if (channelObj) {
+      const channelRec = channelObj as Record<string, string>;
+      info.title = channelRec.title || '';
+      info.siteUrl = channelRec.link || '';
+      info.description = channelRec.description || '';
+    }
 
-    const items = rdf.item || [];
-    const itemsArray = Array.isArray(items) ? items : [items];
+    const itemsObj = rdfRecord['item'];
+    const items: Object[] = Array.isArray(itemsObj) ? itemsObj : (itemsObj ? [itemsObj] : []);
 
-    for (const item of itemsArray) {
+    for (const item of items) {
+      const itemRecord = item as Record<string, string>;
+
       const article: ParsedArticle = {
-        guid: item['about'] || item.link || item.title || '',
-        title: item.title || '',
-        summary: this.stripHtml(item.description || '').slice(0, 300),
-        content: `<p>${item.description || ''}</p>`,
-        url: item.link || '',
-        author: item['dc:creator'] || '',
-        publishedAt: this.parseDate(item['dc:date'] || ''),
+        guid: itemRecord['about'] || itemRecord.link || itemRecord.title || '',
+        title: itemRecord.title || '',
+        summary: this.stripHtml(itemRecord.description || '').slice(0, 300),
+        content: `<p>${itemRecord.description || ''}</p>`,
+        url: itemRecord.link || '',
+        author: itemRecord['dc:creator'] || '',
+        publishedAt: this.parseDate(itemRecord['dc:date'] || ''),
         coverImage: ''
       };
 
