@@ -23,6 +23,48 @@ export interface ParsedArticle {
   coverImage: string;
 }
 
+// 辅助函数：判断是否为字符串
+function isString(val: unknown): boolean {
+  try {
+    return (val as string).length !== undefined && typeof (val as string) !== 'object';
+  } catch {
+    return false;
+  }
+}
+
+// 辅助函数：安全提取字符串值
+function extractString(val: unknown): string {
+  if (val === null || val === undefined) {
+    return '';
+  }
+  try {
+    const strVal = val as string;
+    if (strVal.length !== undefined) {
+      // 检查是否有对象属性（如 #text）
+      const objVal = val as Record<string, string>;
+      if (objVal['#text']) {
+        return objVal['#text'];
+      }
+      if (objVal.href) {
+        return objVal.href;
+      }
+      return strVal;
+    }
+    return '';
+  } catch {
+    return '';
+  }
+}
+
+// 辅助函数：提取属性值
+function extractAttr(val: unknown, attrName: string): string {
+  if (val === null || val === undefined) {
+    return '';
+  }
+  const obj = val as Record<string, string>;
+  return obj[attrName] || '';
+}
+
 export class RssService {
   private static instance: RssService;
 
@@ -96,21 +138,22 @@ export class RssService {
       console.info(TAG, `Parsed result: ${JSON.stringify(result)}`);
 
       // 检测并解析 RSS 2.0
-      if (result.rss) {
-        const rss = result.rss as Record<string, unknown>;
+      const resultRec = result as Record<string, unknown>;
+      if (resultRec['rss']) {
+        const rss = resultRec['rss'] as Record<string, unknown>;
         if (rss.channel) {
           return this.parseRss2(rss.channel as Record<string, unknown>);
         }
       }
 
       // 检测并解析 Atom
-      if (result.feed) {
-        return this.parseAtom(result.feed as Record<string, unknown>);
+      if (resultRec['feed']) {
+        return this.parseAtom(resultRec['feed'] as Record<string, unknown>);
       }
 
       // 检测 RDF/RSS 1.0
-      if (result.RDF) {
-        return this.parseRdf(result.RDF as Record<string, unknown>);
+      if (resultRec['RDF']) {
+        return this.parseRdf(resultRec['RDF'] as Record<string, unknown>);
       }
 
       console.error(TAG, 'Unknown format');
@@ -121,38 +164,11 @@ export class RssService {
     }
   }
 
-  private getStringValue(obj: Record<string, unknown>, key: string): string {
-    const val = obj[key];
-    if (typeof val === 'string') {
-      return val;
-    }
-    if (val && typeof val === 'object') {
-      const valRecord = val as Record<string, string>;
-      return valRecord['#text'] || valRecord.href || '';
-    }
-    return '';
-  }
-
-  private getOptionalString(obj: Record<string, unknown>, key: string): string {
-    const val = obj[key];
-    if (val === undefined || val === null) {
-      return '';
-    }
-    if (typeof val === 'string') {
-      return val;
-    }
-    if (typeof val === 'object') {
-      const valRecord = val as Record<string, string>;
-      return valRecord['#text'] || valRecord.href || '';
-    }
-    return '';
-  }
-
   private parseRss2(channel: Record<string, unknown>): ParsedFeedInfo {
     const info: ParsedFeedInfo = {
-      title: this.getOptionalString(channel, 'title'),
-      siteUrl: this.getOptionalString(channel, 'link'),
-      description: this.getOptionalString(channel, 'description'),
+      title: extractString(channel['title']),
+      siteUrl: extractString(channel['link']),
+      description: extractString(channel['description']),
       iconUrl: '',
       articles: []
     };
@@ -161,37 +177,30 @@ export class RssService {
     const items: Record<string, unknown>[] = Array.isArray(itemsObj) ? itemsObj : (itemsObj ? [itemsObj as Record<string, unknown>] : []);
 
     for (const item of items) {
-      const enclosureObj = item['enclosure'];
+      const itemRec = item as Record<string, unknown>;
+      const enclosureObj = itemRec['enclosure'];
       let coverImage = '';
 
       // 处理 enclosure 标签（RSS 标准图片）
       if (enclosureObj) {
         const enclosure = Array.isArray(enclosureObj) ? enclosureObj[0] : enclosureObj as Record<string, string>;
-        const enclosureRecord = enclosure as Record<string, string>;
-        const enclosureType = enclosureRecord['@_type'] || '';
-        const enclosureUrl = enclosureRecord['@_url'] || '';
-        if (enclosureType && enclosureType.startsWith('image/') && enclosureUrl) {
+        const enclosureType = extractAttr(enclosure, '@_type');
+        const enclosureUrl = extractAttr(enclosure, '@_url');
+        if (enclosureType.startsWith('image/') && enclosureUrl) {
           coverImage = enclosureUrl;
         }
       }
 
-      const contentRaw = item['content:encoded'] || item['encoded'] || '';
-      const contentStr = typeof contentRaw === 'string' ? contentRaw : (contentRaw as Record<string, string>)['#text'] || '';
-      const descriptionRaw = item['description'] || '';
-      const descriptionStr = typeof descriptionRaw === 'string' ? descriptionRaw : (descriptionRaw as Record<string, string>)['#text'] || '';
-      const linkRaw = item['link'] || '';
-      const linkStr = typeof linkRaw === 'string' ? linkRaw : (linkRaw as Record<string, string>)['#text'] || '';
-      const guidRaw = item['guid'] || linkRaw || item['title'] || '';
-      const guidStr = typeof guidRaw === 'string' ? guidRaw : (guidRaw as Record<string, string>)['#text'] || '';
-      const titleRaw = item['title'] || '';
-      const titleStr = typeof titleRaw === 'string' ? titleRaw : (titleRaw as Record<string, string>)['#text'] || '';
-      const authorRaw = item['author'] || item['dc:creator'] || '';
-      const authorStr = typeof authorRaw === 'string' ? authorRaw : (authorRaw as Record<string, string>)['#text'] || '';
-      const pubDateRaw = item['pubDate'] || '';
-      const pubDateStr = typeof pubDateRaw === 'string' ? pubDateRaw : (pubDateRaw as Record<string, string>)['#text'] || '';
+      const contentStr = extractString(itemRec['content:encoded']) || extractString(itemRec['encoded']);
+      const descriptionStr = extractString(itemRec['description']);
+      const linkStr = extractString(itemRec['link']);
+      const guidStr = extractString(itemRec['guid']) || linkStr || extractString(itemRec['title']);
+      const titleStr = extractString(itemRec['title']);
+      const authorStr = extractString(itemRec['author']) || extractString(itemRec['dc:creator']);
+      const pubDateStr = extractString(itemRec['pubDate']);
 
       const article: ParsedArticle = {
-        guid: guidStr || linkStr || titleStr,
+        guid: guidStr,
         title: titleStr,
         summary: this.stripHtml(descriptionStr).slice(0, 300),
         content: contentStr || `<p>${descriptionStr}</p>`,
@@ -215,9 +224,9 @@ export class RssService {
 
   private parseAtom(feed: Record<string, unknown>): ParsedFeedInfo {
     const info: ParsedFeedInfo = {
-      title: this.getOptionalString(feed, 'title'),
+      title: extractString(feed['title']),
       siteUrl: '',
-      description: this.getOptionalString(feed, 'subtitle'),
+      description: extractString(feed['subtitle']),
       iconUrl: '',
       articles: []
     };
@@ -240,11 +249,11 @@ export class RssService {
     const entries: Record<string, unknown>[] = Array.isArray(entriesObj) ? entriesObj : (entriesObj ? [entriesObj as Record<string, unknown>] : []);
 
     for (const entry of entries) {
-      const entryRecord = entry as Record<string, unknown>;
+      const entryRec = entry as Record<string, unknown>;
 
       // 处理 entry link
       let url = '';
-      const entryLinkObj = entryRecord['link'];
+      const entryLinkObj = entryRec['link'];
       if (entryLinkObj) {
         const entryLinks: Record<string, unknown>[] = Array.isArray(entryLinkObj) ? entryLinkObj : [entryLinkObj];
         for (const link of entryLinks) {
@@ -259,22 +268,17 @@ export class RssService {
 
       // 处理作者
       let author = '';
-      const authorObj = entryRecord['author'];
+      const authorObj = entryRec['author'];
       if (authorObj) {
         const authorRec = authorObj as Record<string, string>;
         author = authorRec.name || authorRec['#text'] || '';
       }
 
-      const titleRaw = entryRecord['title'] || '';
-      const titleStr = typeof titleRaw === 'string' ? titleRaw : (titleRaw as Record<string, string>)['#text'] || '';
-      const summaryRaw = entryRecord['summary'] || '';
-      const summaryStr = typeof summaryRaw === 'string' ? summaryRaw : (summaryRaw as Record<string, string>)['#text'] || '';
-      const contentRaw = entryRecord['content'] || '';
-      const contentStr = typeof contentRaw === 'string' ? contentRaw : (contentRaw as Record<string, string>)['#text'] || '';
-      const idRaw = entryRecord['id'] || '';
-      const idStr = typeof idRaw === 'string' ? idRaw : (idRaw as Record<string, string>)['#text'] || '';
-      const updatedRaw = entryRecord['updated'] || entryRecord['published'] || '';
-      const updatedStr = typeof updatedRaw === 'string' ? updatedRaw : (updatedRaw as Record<string, string>)['#text'] || '';
+      const titleStr = extractString(entryRec['title']);
+      const summaryStr = extractString(entryRec['summary']);
+      const contentStr = extractString(entryRec['content']);
+      const idStr = extractString(entryRec['id']);
+      const updatedStr = extractString(entryRec['updated']) || extractString(entryRec['published']);
 
       const article: ParsedArticle = {
         guid: idStr || url || titleStr,
@@ -321,16 +325,16 @@ export class RssService {
     const items: Record<string, unknown>[] = Array.isArray(itemsObj) ? itemsObj : (itemsObj ? [itemsObj as Record<string, unknown>] : []);
 
     for (const item of items) {
-      const itemRecord = item as Record<string, string>;
+      const itemRec = item as Record<string, string>;
 
       const article: ParsedArticle = {
-        guid: itemRecord['about'] || itemRecord.link || itemRecord.title || '',
-        title: itemRecord.title || '',
-        summary: this.stripHtml(itemRecord.description || '').slice(0, 300),
-        content: `<p>${itemRecord.description || ''}</p>`,
-        url: itemRecord.link || '',
-        author: itemRecord['dc:creator'] || '',
-        publishedAt: this.parseDate(itemRecord['dc:date'] || ''),
+        guid: itemRec['about'] || itemRec.link || itemRec.title || '',
+        title: itemRec.title || '',
+        summary: this.stripHtml(itemRec.description || '').slice(0, 300),
+        content: `<p>${itemRec.description || ''}</p>`,
+        url: itemRec.link || '',
+        author: itemRec['dc:creator'] || '',
+        publishedAt: this.parseDate(itemRec['dc:date'] || ''),
         coverImage: ''
       };
 
