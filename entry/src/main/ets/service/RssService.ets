@@ -1,6 +1,5 @@
 import { http } from '@kit.NetworkKit';
 import { Feed, Article } from '../model/Models';
-import { XMLParser } from 'fast-xml-parser';
 
 const TAG = 'RssService';
 
@@ -77,233 +76,91 @@ export class RssService {
   private parseXml(xmlContent: string): ParsedFeedInfo {
     console.info(TAG, `parseXml called, content length: ${xmlContent.length}`);
 
-    try {
-      const options = {
-        ignoreAttributes: false,
-        attributeNamePrefix: '@_',
-        parseAttributeValue: true,
-        parseTagValue: true,
-        removeNSPrefix: true,
-        htmlDecode: true,
-        textNodeName: '#text',
-        ignoreDeclaration: true,
-        alwaysCreateTextNode: false
-      };
+    // 判断是 RSS 还是 Atom
+    const hasFeed = xmlContent.includes('<feed');
+    const hasXmlns = xmlContent.includes('xmlns');
+    const hasRss = xmlContent.includes('<rss');
+    const hasChannel = xmlContent.includes('<channel>');
+    const hasRdf = xmlContent.includes('<rdf:RDF') || xmlContent.includes('<RDF');
+    const hasItem = xmlContent.includes('<item>');
+    const hasEntry = xmlContent.includes('<entry>');
 
-      const parser = new XMLParser(options);
-      const result = parser.parse(xmlContent);
-      console.info(TAG, `Parsed result keys: ${Object.keys(result)}`);
+    console.info(TAG,
+      `Format check: hasFeed=${hasFeed}, hasXmlns=${hasXmlns}, hasRss=${hasRss}, hasChannel=${hasChannel}, hasRdf=${hasRdf}, hasItem=${hasItem}, hasEntry=${hasEntry}`);
 
-      // 检测并解析 RSS 2.0
-      if (result.rss) {
-        const rss = result.rss as Record<string, Object>;
-        if (rss.channel) {
-          return this.parseRss2(rss.channel);
-        }
-      }
-
-      // 检测并解析 Atom
-      if (result.feed) {
-        return this.parseAtom(result.feed);
-      }
-
-      // 检测 RDF/RSS 1.0
-      if (result.RDF) {
-        return this.parseRdf(result.RDF);
-      }
-
-      console.error(TAG, 'Unknown format');
-      throw new Error('不支持的格式：无法识别 RSS 或 Atom');
-    } catch (e) {
-      console.error(TAG, `Parse error: ${e}`);
-      throw e;
+    // Atom 检测：有 feed 标签且有 xmlns 命名空间，或者有 entry 标签
+    if ((hasFeed && hasXmlns) || hasEntry) {
+      console.info(TAG, 'Detected Atom format');
+      return this.parseAtom(xmlContent);
     }
+    // RSS 2.0 或 RDF/RSS 1.0
+    if (hasRss || hasChannel || hasRdf || hasItem) {
+      console.info(TAG, 'Detected RSS format');
+      return this.parseRss2(xmlContent);
+    }
+    console.error(TAG, 'Unknown format');
+    throw new Error('不支持的格式：无法识别 RSS 或 Atom');
   }
 
-  private getStringValue(obj: Object, key: string): string {
-    const record = obj as Record<string, Object>;
-    const val = record[key];
-    if (typeof val === 'string') {
-      return val;
-    }
-    if (val) {
-      const valRecord = val as Record<string, string>;
-      return valRecord['#text'] || valRecord.href || valRecord.toString();
+  /**
+   * 从 XML 内容中提取标签文本内容
+   */
+  private extractTagContent(tagName: string, xml: string): string {
+    const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)</${tagName}>`, 'i');
+    const match = xml.match(regex);
+    if (match && match[1]) {
+      // 处理 CDATA
+      let content = match[1];
+      const cdataMatch = content.match(/<!\[CDATA\[([\s\S]*?)\]\]>);
+      if (cdataMatch) {
+        content = cdataMatch[1];
+      }
+      return this.stripHtml(content.trim());
     }
     return '';
   }
 
-  private getOptionalString(obj: Object, key: string): string {
-    const record = obj as Record<string, Object>;
-    const val = record[key];
-    if (!val) {
-      return '';
+  /**
+   * 从 XML 内容中提取所有指定标签的内容
+   */
+  private extractAllTags(tagName: string, xml: string): string[] {
+    const results: string[] = [];
+    const regex = new RegExp(`<${tagName}[^>]*>([\\s\\S]*?)</${tagName}>`, 'gi');
+    let match: RegExpMatchArray | null;
+    while ((match = regex.exec(xml)) !== null) {
+      let content = match[1];
+      const cdataMatch = content.match(/<!\[CDATA\[([\s\S]*?)\]\]>);
+      if (cdataMatch) {
+        content = cdataMatch[1];
+      }
+      results.push(this.stripHtml(content.trim()));
     }
-    if (typeof val === 'string') {
-      return val;
-    }
-    const valRecord = val as Record<string, string>;
-    return valRecord['#text'] || valRecord.href || '';
+    return results;
   }
 
-  private parseRss2(channel: Object): ParsedFeedInfo {
-    const info: ParsedFeedInfo = {
-      title: this.getOptionalString(channel, 'title'),
-      siteUrl: this.getOptionalString(channel, 'link'),
-      description: this.getOptionalString(channel, 'description'),
-      iconUrl: '',
-      articles: []
-    };
-
-    const channelRecord = channel as Record<string, Object>;
-    const itemsObj = channelRecord['item'];
-    const items: Object[] = Array.isArray(itemsObj) ? itemsObj : (itemsObj ? [itemsObj] : []);
-
-    for (const item of items) {
-      const itemRecord = item as Record<string, Object>;
-      const enclosureObj = itemRecord['enclosure'];
-      let coverImage = '';
-
-      // 处理 enclosure 标签（RSS 标准图片）
-      if (enclosureObj) {
-        const enclosure = Array.isArray(enclosureObj) ? enclosureObj[0] : enclosureObj;
-        const enclosureRecord = enclosure as Record<string, string>;
-        const enclosureType = enclosureRecord['@_type'] || '';
-        const enclosureUrl = enclosureRecord['@_url'] || '';
-        if (enclosureType && enclosureType.startsWith('image/') && enclosureUrl) {
-          coverImage = enclosureUrl;
-        }
-      }
-
-      const contentRaw = itemRecord['content:encoded'] || itemRecord['encoded'] || '';
-      const contentStr = typeof contentRaw === 'string' ? contentRaw : (contentRaw as Record<string, string>)['#text'] || '';
-      const descriptionRaw = itemRecord['description'] || '';
-      const descriptionStr = typeof descriptionRaw === 'string' ? descriptionRaw : (descriptionRaw as Record<string, string>)['#text'] || '';
-      const linkRaw = itemRecord['link'] || '';
-      const linkStr = typeof linkRaw === 'string' ? linkRaw : (linkRaw as Record<string, string>)['#text'] || '';
-      const guidRaw = itemRecord['guid'] || linkRaw || itemRecord['title'] || '';
-      const guidStr = typeof guidRaw === 'string' ? guidRaw : (guidRaw as Record<string, string>)['#text'] || '';
-      const titleRaw = itemRecord['title'] || '';
-      const titleStr = typeof titleRaw === 'string' ? titleRaw : (titleRaw as Record<string, string>)['#text'] || '';
-      const authorRaw = itemRecord['author'] || itemRecord['dc:creator'] || '';
-      const authorStr = typeof authorRaw === 'string' ? authorRaw : (authorRaw as Record<string, string>)['#text'] || '';
-      const pubDateRaw = itemRecord['pubDate'] || '';
-      const pubDateStr = typeof pubDateRaw === 'string' ? pubDateRaw : (pubDateRaw as Record<string, string>)['#text'] || '';
-
-      const article: ParsedArticle = {
-        guid: guidStr || linkStr || titleStr,
-        title: titleStr,
-        summary: this.stripHtml(descriptionStr).slice(0, 300),
-        content: contentStr || `<p>${descriptionStr}</p>`,
-        url: linkStr,
-        author: authorStr,
-        publishedAt: this.parseDate(pubDateStr),
-        coverImage: coverImage
-      };
-
-      // 从 content 中提取第一张图片作为封面
-      if (!article.coverImage && article.content) {
-        article.coverImage = this.extractFirstImage(article.content);
-      }
-
-      info.articles.push(article);
-    }
-
-    console.info(TAG, `RSS2 parse completed, found ${info.articles.length} articles`);
-    return info;
+  /**
+   * 提取标签的属性
+   */
+  private extractAttribute(tagContent: string, attrName: string): string {
+    const regex = new RegExp(`${attrName}\\s*=\\s*["']([^"']+)["']`, 'i');
+    const match = tagContent.match(regex);
+    return match ? match[1] : '';
   }
 
-  private parseAtom(feed: Object): ParsedFeedInfo {
-    const feedRecord = feed as Record<string, Object>;
-
-    const info: ParsedFeedInfo = {
-      title: this.getOptionalString(feed, 'title'),
-      siteUrl: '',
-      description: this.getOptionalString(feed, 'subtitle'),
-      iconUrl: '',
-      articles: []
-    };
-
-    // 处理 feed link
-    const linkObj = feedRecord['link'];
-    if (linkObj) {
-      const links: Object[] = Array.isArray(linkObj) ? linkObj : [linkObj];
-      for (const link of links) {
-        const linkRec = link as Record<string, string>;
-        const rel = linkRec['@_rel'] || 'alternate';
-        const href = linkRec['@_href'] || linkRec['#text'] || linkRec.href || '';
-        if (rel === 'alternate' && !info.siteUrl) {
-          info.siteUrl = href;
-        }
-      }
+  /**
+   * 从 XML 中提取所有 item/entry 标签块
+   */
+  private extractItems(xml: string, itemName: string): string[] {
+    const items: string[] = [];
+    const regex = new RegExp(`<${itemName}[\\s\\S]*?</${itemName}>`, 'gi');
+    let match: RegExpMatchArray | null;
+    while ((match = regex.exec(xml)) !== null) {
+      items.push(match[0]);
     }
-
-    const entriesObj = feedRecord['entry'];
-    const entries: Object[] = Array.isArray(entriesObj) ? entriesObj : (entriesObj ? [entriesObj] : []);
-
-    for (const entry of entries) {
-      const entryRecord = entry as Record<string, Object>;
-
-      // 处理 entry link
-      let url = '';
-      const entryLinkObj = entryRecord['link'];
-      if (entryLinkObj) {
-        const entryLinks: Object[] = Array.isArray(entryLinkObj) ? entryLinkObj : [entryLinkObj];
-        for (const link of entryLinks) {
-          const linkRec = link as Record<string, string>;
-          const rel = linkRec['@_rel'] || 'alternate';
-          const href = linkRec['@_href'] || linkRec['#text'] || linkRec.href || '';
-          if (rel === 'alternate' && !url) {
-            url = href;
-          }
-        }
-      }
-
-      // 处理作者
-      let author = '';
-      const authorObj = entryRecord['author'];
-      if (authorObj) {
-        const authorRec = authorObj as Record<string, string>;
-        author = authorRec.name || authorRec['#text'] || '';
-      }
-
-      const titleRaw = entryRecord['title'] || '';
-      const titleStr = typeof titleRaw === 'string' ? titleRaw : (titleRaw as Record<string, string>)['#text'] || '';
-      const summaryRaw = entryRecord['summary'] || '';
-      const summaryStr = typeof summaryRaw === 'string' ? summaryRaw : (summaryRaw as Record<string, string>)['#text'] || '';
-      const contentRaw = entryRecord['content'] || '';
-      const contentStr = typeof contentRaw === 'string' ? contentRaw : (contentRaw as Record<string, string>)['#text'] || '';
-      const idRaw = entryRecord['id'] || '';
-      const idStr = typeof idRaw === 'string' ? idRaw : (idRaw as Record<string, string>)['#text'] || '';
-      const updatedRaw = entryRecord['updated'] || entryRecord['published'] || '';
-      const updatedStr = typeof updatedRaw === 'string' ? updatedRaw : (updatedRaw as Record<string, string>)['#text'] || '';
-
-      const article: ParsedArticle = {
-        guid: idStr || url || titleStr,
-        title: this.stripHtml(titleStr),
-        summary: this.stripHtml(summaryStr || titleStr).slice(0, 300),
-        content: contentStr || `<p>${summaryStr || titleStr}</p>`,
-        url: url,
-        author: author,
-        publishedAt: this.parseDate(updatedStr),
-        coverImage: ''
-      };
-
-      // 从 content 中提取第一张图片作为封面
-      if (!article.coverImage && article.content) {
-        article.coverImage = this.extractFirstImage(article.content);
-      }
-
-      info.articles.push(article);
-    }
-
-    console.info(TAG, `Atom parse completed: ${info.articles.length} articles`);
-    return info;
+    return items;
   }
 
-  private parseRdf(rdf: Object): ParsedFeedInfo {
-    const rdfRecord = rdf as Record<string, Object>;
-
+  private parseRss2(xmlContent: string): ParsedFeedInfo {
     const info: ParsedFeedInfo = {
       title: '',
       siteUrl: '',
@@ -312,41 +169,174 @@ export class RssService {
       articles: []
     };
 
-    // RDF/RSS 1.0 格式
-    const channelObj = rdfRecord['channel'];
-    if (channelObj) {
-      const channelRec = channelObj as Record<string, string>;
-      info.title = channelRec.title || '';
-      info.siteUrl = channelRec.link || '';
-      info.description = channelRec.description || '';
-    }
+    try {
+      // 提取 channel 内容
+      const channelRegex = /<channel[\s\S]*?<\/channel>/i;
+      const channelMatch = xmlContent.match(channelRegex);
 
-    const itemsObj = rdfRecord['item'];
-    const items: Object[] = Array.isArray(itemsObj) ? itemsObj : (itemsObj ? [itemsObj] : []);
-
-    for (const item of items) {
-      const itemRecord = item as Record<string, string>;
-
-      const article: ParsedArticle = {
-        guid: itemRecord['about'] || itemRecord.link || itemRecord.title || '',
-        title: itemRecord.title || '',
-        summary: this.stripHtml(itemRecord.description || '').slice(0, 300),
-        content: `<p>${itemRecord.description || ''}</p>`,
-        url: itemRecord.link || '',
-        author: itemRecord['dc:creator'] || '',
-        publishedAt: this.parseDate(itemRecord['dc:date'] || ''),
-        coverImage: ''
-      };
-
-      // 从 content 中提取第一张图片作为封面
-      if (!article.coverImage && article.content) {
-        article.coverImage = this.extractFirstImage(article.content);
+      if (!channelMatch) {
+        console.error(TAG, 'No channel found');
+        return info;
       }
 
-      info.articles.push(article);
+      const channelXml = channelMatch[0];
+
+      // 提取频道信息
+      info.title = this.extractTagContent('title', channelXml);
+      info.siteUrl = this.extractTagContent('link', channelXml);
+      info.description = this.extractTagContent('description', channelXml);
+
+      // 提取所有 item
+      const items = this.extractItems(channelXml, 'item');
+      console.info(TAG, `Found ${items.length} items`);
+
+      for (const itemXml of items) {
+        // 提取 enclosure 图片
+        let coverImage = '';
+        const enclosureRegex = /<enclosure\s+([^>]*?)\s*\/?>/gi;
+        const enclosureMatch = itemXml.match(enclosureRegex);
+        if (enclosureMatch) {
+          const enclosureTag = enclosureMatch[0];
+          const type = this.extractAttribute(enclosureTag, 'type');
+          const url = this.extractAttribute(enclosureTag, 'url');
+          if (type && type.startsWith('image/') && url) {
+            coverImage = url;
+          }
+        }
+
+        // 提取文章内容
+        const title = this.extractTagContent('title', itemXml);
+        const link = this.extractTagContent('link', itemXml);
+        const guid = this.extractTagContent('guid', itemXml);
+        const description = this.extractTagContent('description', itemXml);
+        const contentEncoded = this.extractTagContent('content:encoded', itemXml) ||
+                               this.extractTagContent('encoded', itemXml);
+        const author = this.extractTagContent('author', itemXml) ||
+                       this.extractTagContent('dc:creator', itemXml);
+        const pubDate = this.extractTagContent('pubDate', itemXml);
+
+        const article: ParsedArticle = {
+          guid: guid || link || title,
+          title: title,
+          summary: description.slice(0, 300),
+          content: contentEncoded || `<p>${description}</p>`,
+          url: link,
+          author: author,
+          publishedAt: this.parseDate(pubDate),
+          coverImage: coverImage
+        };
+
+        // 从 content 中提取第一张图片作为封面
+        if (!article.coverImage && article.content) {
+          article.coverImage = this.extractFirstImage(article.content);
+        }
+
+        info.articles.push(article);
+      }
+
+      console.info(TAG, `RSS2 parse completed, found ${info.articles.length} articles`);
+    } catch (e) {
+      console.error(TAG, `RSS2 parse error: ${e}`);
     }
 
-    console.info(TAG, `RDF parse completed, found ${info.articles.length} articles`);
+    return info;
+  }
+
+  private parseAtom(xmlContent: string): ParsedFeedInfo {
+    const info: ParsedFeedInfo = {
+      title: '',
+      siteUrl: '',
+      description: '',
+      iconUrl: '',
+      articles: []
+    };
+
+    try {
+      // 提取 feed 内容
+      const feedRegex = /<feed[\s\S]*?<\/feed>/i;
+      const feedMatch = xmlContent.match(feedRegex);
+
+      if (!feedMatch) {
+        console.error(TAG, 'No feed found');
+        return info;
+      }
+
+      const feedXml = feedMatch[0];
+
+      // 提取频道信息
+      info.title = this.extractTagContent('title', feedXml);
+      info.description = this.extractTagContent('subtitle', feedXml);
+
+      // 提取 siteUrl - 处理 link 标签的属性
+      const linkRegex = /<link\s+([^>]*?)\s*\/?>/gi;
+      let linkMatch: RegExpMatchArray | null;
+      while ((linkMatch = linkRegex.exec(feedXml)) !== null) {
+        const linkTag = linkMatch[0];
+        const rel = this.extractAttribute(linkTag, 'rel') || 'alternate';
+        const href = this.extractAttribute(linkTag, 'href');
+        if (rel === 'alternate' && !info.siteUrl && href) {
+          info.siteUrl = href;
+        }
+      }
+
+      // 提取所有 entry
+      const entries = this.extractItems(feedXml, 'entry');
+      console.info(TAG, `Found ${entries.length} entries`);
+
+      for (const entryXml of entries) {
+        // 提取文章 URL - 处理 entry 内的 link 标签
+        let url = '';
+        const entryLinkRegex = /<link\s+([^>]*?)\s*\/?>/gi;
+        let entryLinkMatch: RegExpMatchArray | null;
+        while ((entryLinkMatch = entryLinkRegex.exec(entryXml)) !== null) {
+          const linkTag = entryLinkMatch[0];
+          const rel = this.extractAttribute(linkTag, 'rel') || 'alternate';
+          const href = this.extractAttribute(linkTag, 'href');
+          if (rel === 'alternate' && !url && href) {
+            url = href;
+          }
+        }
+
+        // 提取作者
+        let author = '';
+        const authorRegex = /<author[\s\S]*?<\/author>/i;
+        const authorMatch = entryXml.match(authorRegex);
+        if (authorMatch) {
+          author = this.extractTagContent('name', authorMatch[0]);
+        }
+
+        // 提取文章内容
+        const title = this.extractTagContent('title', entryXml);
+        const id = this.extractTagContent('id', entryXml);
+        const summary = this.extractTagContent('summary', entryXml);
+        const content = this.extractTagContent('content', entryXml);
+        const updated = this.extractTagContent('updated', entryXml);
+        const published = this.extractTagContent('published', entryXml);
+
+        const article: ParsedArticle = {
+          guid: id || url || title,
+          title: title,
+          summary: (summary || title).slice(0, 300),
+          content: content || `<p>${summary || title}</p>`,
+          url: url,
+          author: author,
+          publishedAt: this.parseDate(updated || published),
+          coverImage: ''
+        };
+
+        // 从 content 中提取第一张图片作为封面
+        if (!article.coverImage && article.content) {
+          article.coverImage = this.extractFirstImage(article.content);
+        }
+
+        info.articles.push(article);
+      }
+
+      console.info(TAG, `Atom parse completed: ${info.articles.length} articles`);
+    } catch (e) {
+      console.error(TAG, `Atom parse error: ${e}`);
+    }
+
     return info;
   }
 

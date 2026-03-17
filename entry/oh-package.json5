@@ -5,8 +5,6 @@
   "main": "",
   "author": "",
   "license": "",
-  "dependencies": {
-    "fast-xml-parser": "^5.2.5"
-  }
+  "dependencies": {}
 }
 
