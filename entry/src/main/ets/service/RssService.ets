@@ -1,6 +1,6 @@
 import { http } from '@kit.NetworkKit';
+import { xml, util } from '@kit.ArkTS';
 import { Feed, Article } from '../model/Models';
-import * as parser from 'fast-xml-parser';
 
 const TAG = 'RssService';
 
@@ -23,48 +23,6 @@ export interface ParsedArticle {
   coverImage: string;
 }
 
-// 辅助函数：判断是否为字符串
-function isString(val: unknown): boolean {
-  try {
-    return (val as string).length !== undefined && typeof (val as string) !== 'object';
-  } catch {
-    return false;
-  }
-}
-
-// 辅助函数：安全提取字符串值
-function extractString(val: unknown): string {
-  if (val === null || val === undefined) {
-    return '';
-  }
-  try {
-    const strVal = val as string;
-    if (strVal.length !== undefined) {
-      // 检查是否有对象属性（如 #text）
-      const objVal = val as Record<string, string>;
-      if (objVal['#text']) {
-        return objVal['#text'];
-      }
-      if (objVal.href) {
-        return objVal.href;
-      }
-      return strVal;
-    }
-    return '';
-  } catch {
-    return '';
-  }
-}
-
-// 辅助函数：提取属性值
-function extractAttr(val: unknown, attrName: string): string {
-  if (val === null || val === undefined) {
-    return '';
-  }
-  const obj = val as Record<string, string>;
-  return obj[attrName] || '';
-}
-
 export class RssService {
   private static instance: RssService;
 
@@ -75,17 +33,11 @@ export class RssService {
     return RssService.instance;
   }
 
-  /**
-   * 验证并获取 RSS 源基本信息（用于添加订阅时的预览）
-   */
   async fetchFeedInfo(url: string): Promise<ParsedFeedInfo> {
     const xmlContent = await this.fetchXml(url);
     return this.parseXml(xmlContent);
   }
 
-  /**
-   * 刷新某个订阅源，返回解析到的文章列表
-   */
   async refreshFeed(feedUrl: string): Promise<ParsedFeedInfo> {
     const xmlContent = await this.fetchXml(feedUrl);
     return this.parseXml(xmlContent);
@@ -119,235 +71,30 @@ export class RssService {
   private parseXml(xmlContent: string): ParsedFeedInfo {
     console.info(TAG, `parseXml called, content length: ${xmlContent.length}`);
 
-    try {
-      const options = {
-        ignoreAttributes: false,
-        attributeNamePrefix: '@_',
-        parseAttributeValue: true,
-        parseTagValue: false,
-        removeNSPrefix: true,
-        htmlDecode: true,
-        textNodeName: '#text',
-        ignoreDeclaration: true,
-        alwaysCreateTextNode: false,
-        ignoreOrder: false
-      };
+    const hasFeed = xmlContent.includes('<feed');
+    const hasXmlns = xmlContent.includes('xmlns');
+    const hasRss = xmlContent.includes('<rss');
+    const hasChannel = xmlContent.includes('<channel>');
+    const hasItem = xmlContent.includes('<item>');
+    const hasEntry = xmlContent.includes('<entry>');
 
-      const xmlParser = new parser.XMLParser(options);
-      const result = xmlParser.parse(xmlContent);
-      console.info(TAG, `Parsed result: ${JSON.stringify(result)}`);
+    console.info(TAG, `Format: feed=${hasFeed}, xmlns=${hasXmlns}, rss=${hasRss}, channel=${hasChannel}, item=${hasItem}, entry=${hasEntry}`);
 
-      // 检测并解析 RSS 2.0
-      const resultRec = result as Record<string, unknown>;
-      if (resultRec['rss']) {
-        const rss = resultRec['rss'] as Record<string, unknown>;
-        if (rss.channel) {
-          return this.parseRss2(rss.channel as Record<string, unknown>);
-        }
-      }
-
-      // 检测并解析 Atom
-      if (resultRec['feed']) {
-        return this.parseAtom(resultRec['feed'] as Record<string, unknown>);
-      }
-
-      // 检测 RDF/RSS 1.0
-      if (resultRec['RDF']) {
-        return this.parseRdf(resultRec['RDF'] as Record<string, unknown>);
-      }
-
-      console.error(TAG, 'Unknown format');
-      throw new Error('不支持的格式：无法识别 RSS 或 Atom');
-    } catch (e) {
-      console.error(TAG, `Parse error: ${e}`);
-      throw e;
+    if ((hasFeed && hasXmlns) || hasEntry) {
+      console.info(TAG, 'Detected Atom format');
+      return this.parseAtom(xmlContent);
     }
+    if (hasRss || hasChannel || hasItem) {
+      console.info(TAG, 'Detected RSS format');
+      return this.parseRss2(xmlContent);
+    }
+    throw new Error('不支持的格式：无法识别 RSS 或 Atom');
   }
 
-  private parseRss2(channel: Record<string, unknown>): ParsedFeedInfo {
-    const info: ParsedFeedInfo = {
-      title: extractString(channel['title']),
-      siteUrl: extractString(channel['link']),
-      description: extractString(channel['description']),
-      iconUrl: '',
-      articles: []
-    };
-
-    const itemsObj = channel['item'];
-    const items: Record<string, unknown>[] = Array.isArray(itemsObj) ? itemsObj : (itemsObj ? [itemsObj as Record<string, unknown>] : []);
-
-    for (const item of items) {
-      const itemRec = item as Record<string, unknown>;
-      const enclosureObj = itemRec['enclosure'];
-      let coverImage = '';
-
-      // 处理 enclosure 标签（RSS 标准图片）
-      if (enclosureObj) {
-        const enclosure = Array.isArray(enclosureObj) ? enclosureObj[0] : enclosureObj as Record<string, string>;
-        const enclosureType = extractAttr(enclosure, '@_type');
-        const enclosureUrl = extractAttr(enclosure, '@_url');
-        if (enclosureType.startsWith('image/') && enclosureUrl) {
-          coverImage = enclosureUrl;
-        }
-      }
-
-      const contentStr = extractString(itemRec['content:encoded']) || extractString(itemRec['encoded']);
-      const descriptionStr = extractString(itemRec['description']);
-      const linkStr = extractString(itemRec['link']);
-      const guidStr = extractString(itemRec['guid']) || linkStr || extractString(itemRec['title']);
-      const titleStr = extractString(itemRec['title']);
-      const authorStr = extractString(itemRec['author']) || extractString(itemRec['dc:creator']);
-      const pubDateStr = extractString(itemRec['pubDate']);
-
-      const article: ParsedArticle = {
-        guid: guidStr,
-        title: titleStr,
-        summary: this.stripHtml(descriptionStr).slice(0, 300),
-        content: contentStr || `<p>${descriptionStr}</p>`,
-        url: linkStr,
-        author: authorStr,
-        publishedAt: this.parseDate(pubDateStr),
-        coverImage: coverImage
-      };
-
-      // 从 content 中提取第一张图片作为封面
-      if (!article.coverImage && article.content) {
-        article.coverImage = this.extractFirstImage(article.content);
-      }
-
-      info.articles.push(article);
-    }
-
-    console.info(TAG, `RSS2 parse completed, found ${info.articles.length} articles`);
-    return info;
-  }
-
-  private parseAtom(feed: Record<string, unknown>): ParsedFeedInfo {
-    const info: ParsedFeedInfo = {
-      title: extractString(feed['title']),
-      siteUrl: '',
-      description: extractString(feed['subtitle']),
-      iconUrl: '',
-      articles: []
-    };
-
-    // 处理 feed link
-    const linkObj = feed['link'];
-    if (linkObj) {
-      const links: Record<string, unknown>[] = Array.isArray(linkObj) ? linkObj : [linkObj];
-      for (const link of links) {
-        const linkRec = link as Record<string, string>;
-        const rel = linkRec['@_rel'] || 'alternate';
-        const href = linkRec['@_href'] || linkRec['#text'] || linkRec.href || '';
-        if (rel === 'alternate' && !info.siteUrl && href) {
-          info.siteUrl = href;
-        }
-      }
-    }
-
-    const entriesObj = feed['entry'];
-    const entries: Record<string, unknown>[] = Array.isArray(entriesObj) ? entriesObj : (entriesObj ? [entriesObj as Record<string, unknown>] : []);
-
-    for (const entry of entries) {
-      const entryRec = entry as Record<string, unknown>;
-
-      // 处理 entry link
-      let url = '';
-      const entryLinkObj = entryRec['link'];
-      if (entryLinkObj) {
-        const entryLinks: Record<string, unknown>[] = Array.isArray(entryLinkObj) ? entryLinkObj : [entryLinkObj];
-        for (const link of entryLinks) {
-          const linkRec = link as Record<string, string>;
-          const rel = linkRec['@_rel'] || 'alternate';
-          const href = linkRec['@_href'] || linkRec['#text'] || linkRec.href || '';
-          if (rel === 'alternate' && !url && href) {
-            url = href;
-          }
-        }
-      }
-
-      // 处理作者
-      let author = '';
-      const authorObj = entryRec['author'];
-      if (authorObj) {
-        const authorRec = authorObj as Record<string, string>;
-        author = authorRec.name || authorRec['#text'] || '';
-      }
-
-      const titleStr = extractString(entryRec['title']);
-      const summaryStr = extractString(entryRec['summary']);
-      const contentStr = extractString(entryRec['content']);
-      const idStr = extractString(entryRec['id']);
-      const updatedStr = extractString(entryRec['updated']) || extractString(entryRec['published']);
-
-      const article: ParsedArticle = {
-        guid: idStr || url || titleStr,
-        title: this.stripHtml(titleStr),
-        summary: this.stripHtml(summaryStr || titleStr).slice(0, 300),
-        content: contentStr || `<p>${summaryStr || titleStr}</p>`,
-        url: url,
-        author: author,
-        publishedAt: this.parseDate(updatedStr),
-        coverImage: ''
-      };
-
-      // 从 content 中提取第一张图片作为封面
-      if (!article.coverImage && article.content) {
-        article.coverImage = this.extractFirstImage(article.content);
-      }
-
-      info.articles.push(article);
-    }
-
-    console.info(TAG, `Atom parse completed: ${info.articles.length} articles`);
-    return info;
-  }
-
-  private parseRdf(rdf: Record<string, unknown>): ParsedFeedInfo {
-    const info: ParsedFeedInfo = {
-      title: '',
-      siteUrl: '',
-      description: '',
-      iconUrl: '',
-      articles: []
-    };
-
-    // RDF/RSS 1.0 格式
-    const channelObj = rdf['channel'];
-    if (channelObj) {
-      const channelRec = channelObj as Record<string, string>;
-      info.title = channelRec.title || '';
-      info.siteUrl = channelRec.link || '';
-      info.description = channelRec.description || '';
-    }
-
-    const itemsObj = rdf['item'];
-    const items: Record<string, unknown>[] = Array.isArray(itemsObj) ? itemsObj : (itemsObj ? [itemsObj as Record<string, unknown>] : []);
-
-    for (const item of items) {
-      const itemRec = item as Record<string, string>;
-
-      const article: ParsedArticle = {
-        guid: itemRec['about'] || itemRec.link || itemRec.title || '',
-        title: itemRec.title || '',
-        summary: this.stripHtml(itemRec.description || '').slice(0, 300),
-        content: `<p>${itemRec.description || ''}</p>`,
-        url: itemRec.link || '',
-        author: itemRec['dc:creator'] || '',
-        publishedAt: this.parseDate(itemRec['dc:date'] || ''),
-        coverImage: ''
-      };
-
-      // 从 content 中提取第一张图片作为封面
-      if (!article.coverImage && article.content) {
-        article.coverImage = this.extractFirstImage(article.content);
-      }
-
-      info.articles.push(article);
-    }
-
-    console.info(TAG, `RDF parse completed, found ${info.articles.length} articles`);
-    return info;
+  private stringToArrayBuffer(str: string): ArrayBuffer {
+    const encoder = new util.TextEncoder();
+    const uint8Array = encoder.encodeInto(str);
+    return uint8Array.buffer as ArrayBuffer;
   }
 
   private stripHtml(html: string): string {
@@ -373,17 +120,11 @@ export class RssService {
     }
   }
 
-  /**
-   * 从文章 HTML 内容中提取第一张图片作为封面
-   */
   extractFirstImage(html: string): string {
     const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
     return match ? match[1] : '';
   }
 
-  /**
-   * 格式化时间戳为可读字符串
-   */
   formatDate(timestamp: number): string {
     const now = Date.now();
     const diff = now - timestamp;
@@ -407,5 +148,275 @@ export class RssService {
     const date = new Date(timestamp);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate())
       .padStart(2, '0')}`;
+  }
+
+  /**
+   * 预先解析 XML 中所有 enclosure 标签的属性
+   */
+  private extractEnclosures(xmlContent: string): Array<{ type: string; url: string }> {
+    const enclosures: Array<{ type: string; url: string }> = [];
+    const regex = /<enclosure\s+([^>]*?)\s*\/?>/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(xmlContent)) !== null) {
+      const attrs = match[1];
+      const typeMatch = attrs.match(/type\s*=\s*["']([^"']+)["']/i);
+      const urlMatch = attrs.match(/url\s*=\s*["']([^"']+)["']/i);
+      enclosures.push({
+        type: typeMatch ? typeMatch[1] : '',
+        url: urlMatch ? urlMatch[1] : ''
+      });
+    }
+
+    return enclosures;
+  }
+
+  /**
+   * 预先解析 XML 中所有 link 标签的属性
+   */
+  private extractLinks(xmlContent: string): Array<{ rel: string; href: string; inEntry: boolean }> {
+    const links: Array<{ rel: string; href: string; inEntry: boolean }> = [];
+    const regex = /<link\s+([^>]*?)\s*\/?>/gi;
+    let match: RegExpExecArray | null;
+
+    while ((match = regex.exec(xmlContent)) !== null) {
+      const attrs = match[1];
+      const relMatch = attrs.match(/rel\s*=\s*["']([^"']+)["']/i);
+      const hrefMatch = attrs.match(/href\s*=\s*["']([^"']+)["']/i);
+
+      const beforeLink = xmlContent.substring(0, match.index);
+      const entryOpens = (beforeLink.match(/<entry>/g) || []).length;
+      const entryCloses = (beforeLink.match(/<\/entry>/g) || []).length;
+      const inEntry = entryOpens > entryCloses;
+
+      links.push({
+        rel: relMatch ? relMatch[1] : 'alternate',
+        href: hrefMatch ? hrefMatch[1] : '',
+        inEntry: inEntry
+      });
+    }
+
+    return links;
+  }
+
+  private parseRss2(xmlContent: string): ParsedFeedInfo {
+    const info: ParsedFeedInfo = {
+      title: '',
+      siteUrl: '',
+      description: '',
+      iconUrl: '',
+      articles: []
+    };
+
+    try {
+      const enclosures = this.extractEnclosures(xmlContent);
+      const buffer = this.stringToArrayBuffer(xmlContent);
+      const parser = new xml.XmlPullParser(buffer, 'utf-8');
+
+      let currentTag = '';
+      let currentArticle: ParsedArticle | null = null;
+      let inChannel = false;
+      let inItem = false;
+      let textBuffer = '';
+      let enclosureIndex = 0;
+
+      const options: xml.ParseOptions = {
+        supportDoctype: false,
+        ignoreNameSpace: true,
+        tokenValueCallbackFunction: (eventType: xml.EventType, value: xml.ParseInfo): boolean => {
+          if (eventType === xml.EventType.START_TAG) {
+            currentTag = value.getName();
+            textBuffer = '';
+
+            if (currentTag === 'channel') {
+              inChannel = true;
+            }
+            if (currentTag === 'item') {
+              inItem = true;
+              currentArticle = {
+                guid: '',
+                title: '',
+                summary: '',
+                content: '',
+                url: '',
+                author: '',
+                publishedAt: 0,
+                coverImage: ''
+              };
+            }
+            if (currentTag === 'enclosure' && currentArticle) {
+              const enc = enclosures[enclosureIndex];
+              if (enc && enc.type.startsWith('image/') && enc.url) {
+                currentArticle.coverImage = enc.url;
+              }
+              enclosureIndex++;
+            }
+          } else if (eventType === xml.EventType.TEXT || eventType === xml.EventType.CDSECT) {
+            textBuffer += value.getText();
+          } else if (eventType === xml.EventType.END_TAG) {
+            const tag = value.getName();
+            const text = textBuffer.trim();
+
+            if (inItem && currentArticle) {
+              if (tag === 'title') {
+                currentArticle.title = text;
+              } else if (tag === 'link') {
+                if (!currentArticle.url) {
+                  currentArticle.url = text;
+                }
+              } else if (tag === 'guid') {
+                currentArticle.guid = text;
+              } else if (tag === 'description') {
+                currentArticle.summary = this.stripHtml(text).slice(0, 300);
+              } else if (tag === 'content:encoded' || tag === 'encoded') {
+                currentArticle.content = text;
+              } else if (tag === 'author' || tag === 'dc:creator') {
+                currentArticle.author = text;
+              } else if (tag === 'pubDate') {
+                currentArticle.publishedAt = this.parseDate(text);
+              } else if (tag === 'item') {
+                if (!currentArticle.guid) {
+                  currentArticle.guid = currentArticle.url || currentArticle.title;
+                }
+                if (!currentArticle.content) {
+                  currentArticle.content = `<p>${currentArticle.summary}</p>`;
+                }
+                info.articles.push(currentArticle);
+                currentArticle = null;
+                inItem = false;
+              }
+            } else if (inChannel && !inItem) {
+              if (tag === 'title' && !info.title) {
+                info.title = text;
+              } else if (tag === 'link' && !info.siteUrl) {
+                info.siteUrl = text;
+              } else if (tag === 'description' && !info.description) {
+                info.description = text;
+              } else if (tag === 'channel') {
+                inChannel = false;
+              }
+            }
+            textBuffer = '';
+          }
+          return true;
+        }
+      };
+
+      parser.parse(options);
+      console.info(TAG, `RSS2 parse completed: ${info.articles.length} articles`);
+    } catch (e) {
+      console.error(TAG, `RSS2 parse error: ${e}`);
+    }
+
+    return info;
+  }
+
+  private parseAtom(xmlContent: string): ParsedFeedInfo {
+    const info: ParsedFeedInfo = {
+      title: '',
+      siteUrl: '',
+      description: '',
+      iconUrl: '',
+      articles: []
+    };
+
+    try {
+      const links = this.extractLinks(xmlContent);
+      const buffer = this.stringToArrayBuffer(xmlContent);
+      const parser = new xml.XmlPullParser(buffer, 'utf-8');
+
+      let inEntry = false;
+      let currentArticle: ParsedArticle | null = null;
+      let textBuffer = '';
+      let linkIndex = 0;
+
+      const options: xml.ParseOptions = {
+        supportDoctype: false,
+        ignoreNameSpace: true,
+        tokenValueCallbackFunction: (eventType: xml.EventType, value: xml.ParseInfo): boolean => {
+          if (eventType === xml.EventType.START_TAG) {
+            const rawName = value.getName();
+            const tagName = rawName.includes(':') ? rawName.split(':')[1] : rawName;
+            textBuffer = '';
+
+            if (tagName === 'entry') {
+              inEntry = true;
+              currentArticle = {
+                guid: '',
+                title: '',
+                summary: '',
+                content: '',
+                url: '',
+                author: '',
+                publishedAt: 0,
+                coverImage: ''
+              };
+            }
+            if (tagName === 'link' && linkIndex < links.length) {
+              const link = links[linkIndex];
+              linkIndex++;
+
+              if (inEntry && currentArticle && link.rel === 'alternate' && !currentArticle.url) {
+                currentArticle.url = link.href;
+              } else if (!inEntry && link.rel === 'alternate' && !info.siteUrl) {
+                info.siteUrl = link.href;
+              }
+            }
+          } else if (eventType === xml.EventType.TEXT || eventType === xml.EventType.CDSECT) {
+            textBuffer += value.getText();
+          } else if (eventType === xml.EventType.END_TAG) {
+            const rawName = value.getName();
+            const tagName = rawName.includes(':') ? rawName.split(':')[1] : rawName;
+            const text = textBuffer.trim();
+
+            if (inEntry && currentArticle) {
+              if (tagName === 'title') {
+                currentArticle.title = this.stripHtml(text);
+              } else if (tagName === 'id' && !currentArticle.guid) {
+                currentArticle.guid = text;
+              } else if (tagName === 'summary') {
+                currentArticle.summary = this.stripHtml(text).slice(0, 300);
+              } else if (tagName === 'content') {
+                currentArticle.content = text;
+              } else if (tagName === 'name' && !currentArticle.author) {
+                currentArticle.author = text;
+              } else if (tagName === 'updated' || tagName === 'published') {
+                if (!currentArticle.publishedAt) {
+                  currentArticle.publishedAt = this.parseDate(text);
+                }
+              } else if (tagName === 'entry') {
+                if (!currentArticle.guid) {
+                  currentArticle.guid = currentArticle.url || currentArticle.title;
+                }
+                if (!currentArticle.content) {
+                  currentArticle.content = `<p>${currentArticle.summary}</p>`;
+                }
+                if (!currentArticle.summary) {
+                  currentArticle.summary = currentArticle.title;
+                }
+                info.articles.push(currentArticle);
+                currentArticle = null;
+                inEntry = false;
+              }
+            } else if (!inEntry) {
+              if (tagName === 'title' && !info.title) {
+                info.title = this.stripHtml(text);
+              } else if (tagName === 'subtitle' && !info.description) {
+                info.description = text;
+              }
+            }
+            textBuffer = '';
+          }
+          return true;
+        }
+      };
+
+      parser.parse(options);
+      console.info(TAG, `Atom parse completed: ${info.articles.length} articles`);
+    } catch (e) {
+      console.error(TAG, `Atom parse error: ${e}`);
+    }
+
+    return info;
   }
 }
