@@ -1,6 +1,6 @@
 import { http } from '@kit.NetworkKit';
-import { xml, util } from '@kit.ArkTS';
 import { Feed, Article } from '../model/Models';
+import { XMLParser } from 'fast-xml-parser';
 
 const TAG = 'RssService';
 
@@ -71,30 +71,267 @@ export class RssService {
   private parseXml(xmlContent: string): ParsedFeedInfo {
     console.info(TAG, `parseXml called, content length: ${xmlContent.length}`);
 
-    const hasFeed = xmlContent.includes('<feed');
-    const hasXmlns = xmlContent.includes('xmlns');
-    const hasRss = xmlContent.includes('<rss');
-    const hasChannel = xmlContent.includes('<channel>');
-    const hasItem = xmlContent.includes('<item>');
-    const hasEntry = xmlContent.includes('<entry>');
+    const options = {
+      ignoreAttributes: false,
+      attributeNamePrefix: '@_',
+      parseAttributeValue: true,
+      parseTagValue: true,
+      removeNSPrefix: true,
+      htmlDecode: true,
+      textNodeName: '#text',
+      ignoreDeclaration: true,
+      alwaysCreateTextNode: false
+    };
 
-    console.info(TAG, `Format: feed=${hasFeed}, xmlns=${hasXmlns}, rss=${hasRss}, channel=${hasChannel}, item=${hasItem}, entry=${hasEntry}`);
+    const parser = new XMLParser(options);
+    const result = parser.parse(xmlContent);
+    console.info(TAG, `Parsed result: ${JSON.stringify(result)}`);
 
-    if ((hasFeed && hasXmlns) || hasEntry) {
-      console.info(TAG, 'Detected Atom format');
-      return this.parseAtom(xmlContent);
+    const resultObj = result as Record<string, Object>;
+
+    if (resultObj['rss']) {
+      const rss = resultObj['rss'] as Record<string, Object>;
+      if (rss['channel']) {
+        return this.parseRss2(rss['channel'] as Record<string, Object>);
+      }
     }
-    if (hasRss || hasChannel || hasItem) {
-      console.info(TAG, 'Detected RSS format');
-      return this.parseRss2(xmlContent);
+
+    if (resultObj['feed']) {
+      return this.parseAtom(resultObj['feed'] as Record<string, Object>);
     }
+
+    if (resultObj['RDF']) {
+      return this.parseRdf(resultObj['RDF'] as Record<string, Object>);
+    }
+
     throw new Error('不支持的格式：无法识别 RSS 或 Atom');
   }
 
-  private stringToArrayBuffer(str: string): ArrayBuffer {
-    const encoder = new util.TextEncoder();
-    const uint8Array = encoder.encodeInto(str);
-    return uint8Array.buffer as ArrayBuffer;
+  private getTextValue(obj: Record<string, Object>, key: string): string {
+    const val = obj[key];
+    if (val === null || val === undefined) {
+      return '';
+    }
+    const valStr = val as unknown as string;
+    if (valStr !== null && valStr !== undefined) {
+      const objVal = val as Record<string, string>;
+      return objVal['#text'] || objVal.href || valStr;
+    }
+    return '';
+  }
+
+  private parseRss2(channel: Record<string, Object>): ParsedFeedInfo {
+    const info: ParsedFeedInfo = {
+      title: this.getTextValue(channel, 'title'),
+      siteUrl: this.getTextValue(channel, 'link'),
+      description: this.getTextValue(channel, 'description'),
+      iconUrl: '',
+      articles: []
+    };
+
+    const itemsObj = channel['item'];
+    let items: Array<Record<string, Object>> = [];
+    if (itemsObj) {
+      if (Array.isArray(itemsObj)) {
+        items = itemsObj as Array<Record<string, Object>>;
+      } else {
+        items = [itemsObj as Record<string, Object>];
+      }
+    }
+
+    for (const item of items) {
+      const itemRec = item as Record<string, Object>;
+
+      let coverImage = '';
+      const enclosureObj = itemRec['enclosure'];
+      if (enclosureObj) {
+        let enclosure: Record<string, string>;
+        if (Array.isArray(enclosureObj)) {
+          enclosure = enclosureObj[0] as Record<string, string>;
+        } else {
+          enclosure = enclosureObj as Record<string, string>;
+        }
+        const enclosureType = enclosure['@_type'] || '';
+        const enclosureUrl = enclosure['@_url'] || '';
+        if (enclosureType.startsWith('image/') && enclosureUrl) {
+          coverImage = enclosureUrl;
+        }
+      }
+
+      const contentEncoded = this.getTextValue(itemRec, 'content:encoded') || this.getTextValue(itemRec, 'encoded');
+      const description = this.getTextValue(itemRec, 'description');
+      const link = this.getTextValue(itemRec, 'link');
+      const guid = this.getTextValue(itemRec, 'guid') || link || this.getTextValue(itemRec, 'title');
+      const title = this.getTextValue(itemRec, 'title');
+      const author = this.getTextValue(itemRec, 'author') || this.getTextValue(itemRec, 'dc:creator');
+      const pubDate = this.getTextValue(itemRec, 'pubDate');
+
+      const article: ParsedArticle = {
+        guid: guid,
+        title: title,
+        summary: this.stripHtml(description).slice(0, 300),
+        content: contentEncoded || `<p>${description}</p>`,
+        url: link,
+        author: author,
+        publishedAt: this.parseDate(pubDate),
+        coverImage: coverImage
+      };
+
+      if (!article.coverImage && article.content) {
+        article.coverImage = this.extractFirstImage(article.content);
+      }
+
+      info.articles.push(article);
+    }
+
+    console.info(TAG, `RSS2 parse completed: ${info.articles.length} articles`);
+    return info;
+  }
+
+  private parseAtom(feed: Record<string, Object>): ParsedFeedInfo {
+    const info: ParsedFeedInfo = {
+      title: this.getTextValue(feed, 'title'),
+      siteUrl: '',
+      description: this.getTextValue(feed, 'subtitle'),
+      iconUrl: '',
+      articles: []
+    };
+
+    const linkObj = feed['link'];
+    if (linkObj) {
+      let links: Array<Record<string, Object>> = [];
+      if (Array.isArray(linkObj)) {
+        links = linkObj as Array<Record<string, Object>>;
+      } else {
+        links = [linkObj as Record<string, Object>];
+      }
+      for (const link of links) {
+        const linkRec = link as Record<string, string>;
+        const rel = linkRec['@_rel'] || 'alternate';
+        const href = linkRec['@_href'] || linkRec['#text'] || linkRec.href || '';
+        if (rel === 'alternate' && !info.siteUrl && href) {
+          info.siteUrl = href;
+        }
+      }
+    }
+
+    const entriesObj = feed['entry'];
+    let entries: Array<Record<string, Object>> = [];
+    if (entriesObj) {
+      if (Array.isArray(entriesObj)) {
+        entries = entriesObj as Array<Record<string, Object>>;
+      } else {
+        entries = [entriesObj as Record<string, Object>];
+      }
+    }
+
+    for (const entry of entries) {
+      const entryRec = entry as Record<string, Object>;
+
+      let url = '';
+      const entryLinkObj = entryRec['link'];
+      if (entryLinkObj) {
+        let entryLinks: Array<Record<string, Object>> = [];
+        if (Array.isArray(entryLinkObj)) {
+          entryLinks = entryLinkObj as Array<Record<string, Object>>;
+        } else {
+          entryLinks = [entryLinkObj as Record<string, Object>];
+        }
+        for (const link of entryLinks) {
+          const linkRec = link as Record<string, string>;
+          const rel = linkRec['@_rel'] || 'alternate';
+          const href = linkRec['@_href'] || linkRec['#text'] || linkRec.href || '';
+          if (rel === 'alternate' && !url && href) {
+            url = href;
+          }
+        }
+      }
+
+      let author = '';
+      const authorObj = entryRec['author'];
+      if (authorObj) {
+        const authorRec = authorObj as Record<string, string>;
+        author = authorRec.name || authorRec['#text'] || '';
+      }
+
+      const title = this.getTextValue(entryRec, 'title');
+      const summary = this.getTextValue(entryRec, 'summary');
+      const content = this.getTextValue(entryRec, 'content');
+      const id = this.getTextValue(entryRec, 'id');
+      const updated = this.getTextValue(entryRec, 'updated') || this.getTextValue(entryRec, 'published');
+
+      const article: ParsedArticle = {
+        guid: id || url || title,
+        title: this.stripHtml(title),
+        summary: this.stripHtml(summary || title).slice(0, 300),
+        content: content || `<p>${summary || title}</p>`,
+        url: url,
+        author: author,
+        publishedAt: this.parseDate(updated),
+        coverImage: ''
+      };
+
+      if (!article.coverImage && article.content) {
+        article.coverImage = this.extractFirstImage(article.content);
+      }
+
+      info.articles.push(article);
+    }
+
+    console.info(TAG, `Atom parse completed: ${info.articles.length} articles`);
+    return info;
+  }
+
+  private parseRdf(rdf: Record<string, Object>): ParsedFeedInfo {
+    const info: ParsedFeedInfo = {
+      title: '',
+      siteUrl: '',
+      description: '',
+      iconUrl: '',
+      articles: []
+    };
+
+    const channelObj = rdf['channel'];
+    if (channelObj) {
+      const channelRec = channelObj as Record<string, string>;
+      info.title = channelRec.title || '';
+      info.siteUrl = channelRec.link || '';
+      info.description = channelRec.description || '';
+    }
+
+    const itemsObj = rdf['item'];
+    let items: Array<Record<string, Object>> = [];
+    if (itemsObj) {
+      if (Array.isArray(itemsObj)) {
+        items = itemsObj as Array<Record<string, Object>>;
+      } else {
+        items = [itemsObj as Record<string, Object>];
+      }
+    }
+
+    for (const item of items) {
+      const itemRec = item as Record<string, string>;
+
+      const article: ParsedArticle = {
+        guid: itemRec['about'] || itemRec.link || itemRec.title || '',
+        title: itemRec.title || '',
+        summary: this.stripHtml(itemRec.description || '').slice(0, 300),
+        content: `<p>${itemRec.description || ''}</p>`,
+        url: itemRec.link || '',
+        author: itemRec['dc:creator'] || '',
+        publishedAt: this.parseDate(itemRec['dc:date'] || ''),
+        coverImage: ''
+      };
+
+      if (!article.coverImage && article.content) {
+        article.coverImage = this.extractFirstImage(article.content);
+      }
+
+      info.articles.push(article);
+    }
+
+    console.info(TAG, `RDF parse completed: ${info.articles.length} articles`);
+    return info;
   }
 
   private stripHtml(html: string): string {
@@ -148,275 +385,5 @@ export class RssService {
     const date = new Date(timestamp);
     return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, '0')}-${String(date.getDate())
       .padStart(2, '0')}`;
-  }
-
-  /**
-   * 预先解析 XML 中所有 enclosure 标签的属性
-   */
-  private extractEnclosures(xmlContent: string): Array<{ type: string; url: string }> {
-    const enclosures: Array<{ type: string; url: string }> = [];
-    const regex = /<enclosure\s+([^>]*?)\s*\/?>/gi;
-    let match: RegExpExecArray | null;
-
-    while ((match = regex.exec(xmlContent)) !== null) {
-      const attrs = match[1];
-      const typeMatch = attrs.match(/type\s*=\s*["']([^"']+)["']/i);
-      const urlMatch = attrs.match(/url\s*=\s*["']([^"']+)["']/i);
-      enclosures.push({
-        type: typeMatch ? typeMatch[1] : '',
-        url: urlMatch ? urlMatch[1] : ''
-      });
-    }
-
-    return enclosures;
-  }
-
-  /**
-   * 预先解析 XML 中所有 link 标签的属性
-   */
-  private extractLinks(xmlContent: string): Array<{ rel: string; href: string; inEntry: boolean }> {
-    const links: Array<{ rel: string; href: string; inEntry: boolean }> = [];
-    const regex = /<link\s+([^>]*?)\s*\/?>/gi;
-    let match: RegExpExecArray | null;
-
-    while ((match = regex.exec(xmlContent)) !== null) {
-      const attrs = match[1];
-      const relMatch = attrs.match(/rel\s*=\s*["']([^"']+)["']/i);
-      const hrefMatch = attrs.match(/href\s*=\s*["']([^"']+)["']/i);
-
-      const beforeLink = xmlContent.substring(0, match.index);
-      const entryOpens = (beforeLink.match(/<entry>/g) || []).length;
-      const entryCloses = (beforeLink.match(/<\/entry>/g) || []).length;
-      const inEntry = entryOpens > entryCloses;
-
-      links.push({
-        rel: relMatch ? relMatch[1] : 'alternate',
-        href: hrefMatch ? hrefMatch[1] : '',
-        inEntry: inEntry
-      });
-    }
-
-    return links;
-  }
-
-  private parseRss2(xmlContent: string): ParsedFeedInfo {
-    const info: ParsedFeedInfo = {
-      title: '',
-      siteUrl: '',
-      description: '',
-      iconUrl: '',
-      articles: []
-    };
-
-    try {
-      const enclosures = this.extractEnclosures(xmlContent);
-      const buffer = this.stringToArrayBuffer(xmlContent);
-      const parser = new xml.XmlPullParser(buffer, 'utf-8');
-
-      let currentTag = '';
-      let currentArticle: ParsedArticle | null = null;
-      let inChannel = false;
-      let inItem = false;
-      let textBuffer = '';
-      let enclosureIndex = 0;
-
-      const options: xml.ParseOptions = {
-        supportDoctype: false,
-        ignoreNameSpace: true,
-        tokenValueCallbackFunction: (eventType: xml.EventType, value: xml.ParseInfo): boolean => {
-          if (eventType === xml.EventType.START_TAG) {
-            currentTag = value.getName();
-            textBuffer = '';
-
-            if (currentTag === 'channel') {
-              inChannel = true;
-            }
-            if (currentTag === 'item') {
-              inItem = true;
-              currentArticle = {
-                guid: '',
-                title: '',
-                summary: '',
-                content: '',
-                url: '',
-                author: '',
-                publishedAt: 0,
-                coverImage: ''
-              };
-            }
-            if (currentTag === 'enclosure' && currentArticle) {
-              const enc = enclosures[enclosureIndex];
-              if (enc && enc.type.startsWith('image/') && enc.url) {
-                currentArticle.coverImage = enc.url;
-              }
-              enclosureIndex++;
-            }
-          } else if (eventType === xml.EventType.TEXT || eventType === xml.EventType.CDSECT) {
-            textBuffer += value.getText();
-          } else if (eventType === xml.EventType.END_TAG) {
-            const tag = value.getName();
-            const text = textBuffer.trim();
-
-            if (inItem && currentArticle) {
-              if (tag === 'title') {
-                currentArticle.title = text;
-              } else if (tag === 'link') {
-                if (!currentArticle.url) {
-                  currentArticle.url = text;
-                }
-              } else if (tag === 'guid') {
-                currentArticle.guid = text;
-              } else if (tag === 'description') {
-                currentArticle.summary = this.stripHtml(text).slice(0, 300);
-              } else if (tag === 'content:encoded' || tag === 'encoded') {
-                currentArticle.content = text;
-              } else if (tag === 'author' || tag === 'dc:creator') {
-                currentArticle.author = text;
-              } else if (tag === 'pubDate') {
-                currentArticle.publishedAt = this.parseDate(text);
-              } else if (tag === 'item') {
-                if (!currentArticle.guid) {
-                  currentArticle.guid = currentArticle.url || currentArticle.title;
-                }
-                if (!currentArticle.content) {
-                  currentArticle.content = `<p>${currentArticle.summary}</p>`;
-                }
-                info.articles.push(currentArticle);
-                currentArticle = null;
-                inItem = false;
-              }
-            } else if (inChannel && !inItem) {
-              if (tag === 'title' && !info.title) {
-                info.title = text;
-              } else if (tag === 'link' && !info.siteUrl) {
-                info.siteUrl = text;
-              } else if (tag === 'description' && !info.description) {
-                info.description = text;
-              } else if (tag === 'channel') {
-                inChannel = false;
-              }
-            }
-            textBuffer = '';
-          }
-          return true;
-        }
-      };
-
-      parser.parse(options);
-      console.info(TAG, `RSS2 parse completed: ${info.articles.length} articles`);
-    } catch (e) {
-      console.error(TAG, `RSS2 parse error: ${e}`);
-    }
-
-    return info;
-  }
-
-  private parseAtom(xmlContent: string): ParsedFeedInfo {
-    const info: ParsedFeedInfo = {
-      title: '',
-      siteUrl: '',
-      description: '',
-      iconUrl: '',
-      articles: []
-    };
-
-    try {
-      const links = this.extractLinks(xmlContent);
-      const buffer = this.stringToArrayBuffer(xmlContent);
-      const parser = new xml.XmlPullParser(buffer, 'utf-8');
-
-      let inEntry = false;
-      let currentArticle: ParsedArticle | null = null;
-      let textBuffer = '';
-      let linkIndex = 0;
-
-      const options: xml.ParseOptions = {
-        supportDoctype: false,
-        ignoreNameSpace: true,
-        tokenValueCallbackFunction: (eventType: xml.EventType, value: xml.ParseInfo): boolean => {
-          if (eventType === xml.EventType.START_TAG) {
-            const rawName = value.getName();
-            const tagName = rawName.includes(':') ? rawName.split(':')[1] : rawName;
-            textBuffer = '';
-
-            if (tagName === 'entry') {
-              inEntry = true;
-              currentArticle = {
-                guid: '',
-                title: '',
-                summary: '',
-                content: '',
-                url: '',
-                author: '',
-                publishedAt: 0,
-                coverImage: ''
-              };
-            }
-            if (tagName === 'link' && linkIndex < links.length) {
-              const link = links[linkIndex];
-              linkIndex++;
-
-              if (inEntry && currentArticle && link.rel === 'alternate' && !currentArticle.url) {
-                currentArticle.url = link.href;
-              } else if (!inEntry && link.rel === 'alternate' && !info.siteUrl) {
-                info.siteUrl = link.href;
-              }
-            }
-          } else if (eventType === xml.EventType.TEXT || eventType === xml.EventType.CDSECT) {
-            textBuffer += value.getText();
-          } else if (eventType === xml.EventType.END_TAG) {
-            const rawName = value.getName();
-            const tagName = rawName.includes(':') ? rawName.split(':')[1] : rawName;
-            const text = textBuffer.trim();
-
-            if (inEntry && currentArticle) {
-              if (tagName === 'title') {
-                currentArticle.title = this.stripHtml(text);
-              } else if (tagName === 'id' && !currentArticle.guid) {
-                currentArticle.guid = text;
-              } else if (tagName === 'summary') {
-                currentArticle.summary = this.stripHtml(text).slice(0, 300);
-              } else if (tagName === 'content') {
-                currentArticle.content = text;
-              } else if (tagName === 'name' && !currentArticle.author) {
-                currentArticle.author = text;
-              } else if (tagName === 'updated' || tagName === 'published') {
-                if (!currentArticle.publishedAt) {
-                  currentArticle.publishedAt = this.parseDate(text);
-                }
-              } else if (tagName === 'entry') {
-                if (!currentArticle.guid) {
-                  currentArticle.guid = currentArticle.url || currentArticle.title;
-                }
-                if (!currentArticle.content) {
-                  currentArticle.content = `<p>${currentArticle.summary}</p>`;
-                }
-                if (!currentArticle.summary) {
-                  currentArticle.summary = currentArticle.title;
-                }
-                info.articles.push(currentArticle);
-                currentArticle = null;
-                inEntry = false;
-              }
-            } else if (!inEntry) {
-              if (tagName === 'title' && !info.title) {
-                info.title = this.stripHtml(text);
-              } else if (tagName === 'subtitle' && !info.description) {
-                info.description = text;
-              }
-            }
-            textBuffer = '';
-          }
-          return true;
-        }
-      };
-
-      parser.parse(options);
-      console.info(TAG, `Atom parse completed: ${info.articles.length} articles`);
-    } catch (e) {
-      console.error(TAG, `Atom parse error: ${e}`);
-    }
-
-    return info;
   }
 }

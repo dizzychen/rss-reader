@@ -2,6 +2,7 @@
   "modelVersion": "6.0.2",
   "description": "Please describe the basic information.",
   "dependencies": {
+    "fast-xml-parser": "^4.5.1"
   },
   "devDependencies": {
     "@ohos/hypium": "1.0.25",
