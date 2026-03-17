@@ -12,7 +12,7 @@ const MOCK_RSS2_XML = `<?xml version="1.0" encoding="UTF-8"?>
       <title>文章标题 1</title>
       <link>https://example.com/article1</link>
       <guid>https://example.com/article1</guid>
-      <description>&lt;p&gt;这是文章 1 的摘要内容&lt;/p&gt;</description>
+      <description><![CDATA[<p>这是文章 1 的摘要内容</p>]]></description>
       <author>作者 A</author>
       <pubDate>Mon, 01 Jan 2024 00:00:00 +0000</pubDate>
     </item>
@@ -77,25 +77,25 @@ export default function RssServiceTest() {
     describe('formatDate', () => {
       it('should_return_just_now_for_recent_time', 0, () => {
         const now = Date.now();
-        const result = service.formatDate(now - 10000); // 10 秒前
+        const result = service.formatDate(now - 10000);
         expect(result).assertEqual('刚刚');
       });
 
       it('should_return_minutes_ago', 0, () => {
         const now = Date.now();
-        const result = service.formatDate(now - 5 * 60 * 1000); // 5 分钟前
+        const result = service.formatDate(now - 5 * 60 * 1000);
         expect(result).assertEqual('5 分钟前');
       });
 
       it('should_return_hours_ago', 0, () => {
         const now = Date.now();
-        const result = service.formatDate(now - 3 * 60 * 60 * 1000); // 3 小时前
+        const result = service.formatDate(now - 3 * 60 * 60 * 1000);
         expect(result).assertEqual('3 小时前');
       });
 
       it('should_return_days_ago', 0, () => {
         const now = Date.now();
-        const result = service.formatDate(now - 2 * 24 * 60 * 60 * 1000); // 2 天前
+        const result = service.formatDate(now - 2 * 24 * 60 * 60 * 1000);
         expect(result).assertEqual('2 天前');
       });
 
@@ -120,9 +120,8 @@ export default function RssServiceTest() {
         const now = Date.now();
         const sevenDaysAgo = now - 7 * 24 * 60 * 60 * 1000;
         const result = service.formatDate(sevenDaysAgo);
-        // 7 天前应返回日期格式
         expect(result.includes('-')).assertTrue();
-        expect(result.length).assertEqual(10); // YYYY-MM-DD
+        expect(result.length).assertEqual(10);
       });
     });
 
@@ -234,7 +233,6 @@ export default function RssServiceTest() {
 
       it('should_decode_html_in_description', 0, () => {
         const result = (service as any).parseXml(MOCK_RSS2_XML);
-        // 摘要应包含 HTML 解码后的内容
         expect(result.articles[0].summary).assertContain('文章 1');
       });
 
@@ -290,7 +288,7 @@ export default function RssServiceTest() {
       it('should_throw_for_invalid_format', 0, () => {
         try {
           (service as any).parseXml(MOCK_INVALID_XML);
-          expect(true).assertEqual(false); // Should not reach
+          expect(true).assertEqual(false);
         } catch (e) {
           expect((e as Error).message).assertContain('不支持的格式');
         }
