@@ -1,6 +1,6 @@
 import { http } from '@kit.NetworkKit';
 import { Feed, Article } from '../model/Models';
-import { XMLParser } from 'fast-xml-parser';
+import * as parser from 'fast-xml-parser';
 
 const TAG = 'RssService';
 
@@ -91,8 +91,8 @@ export class RssService {
         ignoreOrder: false
       };
 
-      const parser = new XMLParser(options);
-      const result = parser.parse(xmlContent);
+      const xmlParser = new parser.XMLParser(options);
+      const result = xmlParser.parse(xmlContent);
       console.info(TAG, `Parsed result: ${JSON.stringify(result)}`);
 
       // 检测并解析 RSS 2.0
