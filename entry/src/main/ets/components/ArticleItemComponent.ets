@@ -4,7 +4,10 @@ import { RssService } from '../service/RssService';
 
 @Component
 export struct ArticleItemComponent {
-  @Prop article: Article = {} as Article;
+  @Prop article: Article = {
+    feedId: 0, guid: '', title: '', summary: '', content: '',
+    url: '', author: '', publishedAt: 0, isRead: 0, isStarred: 0, coverImage: ''
+  };
   onTap: () => void = () => {};
   onStarToggle: () => void = () => {};
 
@@ -60,12 +63,9 @@ export struct ArticleItemComponent {
 
       // 收藏按钮
       Button({ type: ButtonType.Circle }) {
-        Image(this.article.isStarred === 1 ? $r('app.media.ic_star_filled') : $r('app.media.ic_star'))
-          .width(18)
-          .height(18)
-          .fillColor(this.article.isStarred === 1
-            ? Color.Orange
-            : $r('sys.color.ohos_id_color_text_tertiary'))
+        SymbolGlyph($r(this.article.isStarred === 1 ? 'sys.symbol.star_fill' : 'sys.symbol.star'))
+          .fontSize(18)
+          .fontColor([this.article.isStarred === 1 ? Color.Orange : $r('sys.color.ohos_id_color_text_secondary')])
       }
       .width(32)
       .height(32)

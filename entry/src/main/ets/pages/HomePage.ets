@@ -1,6 +1,6 @@
 // 首页：展示所有文章（聚合视图）
 import { router } from '@kit.ArkUI';
-import { Article } from '../model/Models';
+import { Article, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedRefreshService } from '../service/FeedRefreshService';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
@@ -11,11 +11,17 @@ export struct HomePage {
   @State isLoading: boolean = false;
   @State onlyUnread: boolean = false;
   @State isRefreshing: boolean = false;
+  @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
   private pageOffset: number = 0;
   private pageSize: number = 30;
+  private feedMap: Map<number, string> = new Map();
 
   aboutToAppear() {
     this.loadArticles();
+  }
+
+  onRefreshTickChanged() {
+    this.loadArticles(true);
   }
 
   async loadArticles(reset: boolean = true) {
@@ -25,7 +31,17 @@ export struct HomePage {
     }
     try {
       const db = DatabaseHelper.getInstance();
+      // 构建 feedId → feedTitle 的映射
+      const feeds: Feed[] = await db.getAllFeeds();
+      this.feedMap.clear();
+      for (const f of feeds) {
+        this.feedMap.set(f.id!, f.title);
+      }
       const items = await db.getAllArticles(this.onlyUnread, this.pageSize, this.pageOffset);
+      // 给每篇文章附加来源名称
+      for (const item of items) {
+        item.feedTitle = this.feedMap.get(item.feedId) ?? '';
+      }
       if (reset) {
         this.articles = items;
       } else {
@@ -42,7 +58,7 @@ export struct HomePage {
   async doRefresh() {
     this.isRefreshing = true;
     try {
-      await FeedRefreshService.getInstance().refreshAll(getContext(this));
+      await FeedRefreshService.getInstance().refreshAll(this.getUIContext().getHostContext()!);
       await this.loadArticles(true);
     } catch (e) {
       console.error('HomePage', `刷新失败: ${e}`);
@@ -70,16 +86,15 @@ export struct HomePage {
           .fontColor($r('sys.color.ohos_id_color_text_secondary'))
           .margin({ left: 4, right: 8 })
         Button({ type: ButtonType.Circle }) {
-          Image($r('app.media.ic_settings'))
-            .width(20)
-            .height(20)
-            .fillColor($r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r('sys.symbol.gearshape'))
+            .fontSize(20)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36)
         .height(36)
         .backgroundColor(Color.Transparent)
         .onClick(() => {
-          router.pushUrl({ url: 'pages/SettingsPage' });
+          this.getUIContext().getRouter().pushUrl({ url: 'pages/SettingsPage' });
         })
       }
       .width('100%')
@@ -114,7 +129,7 @@ export struct HomePage {
                 ArticleItemComponent({
                   article: article,
                   onTap: () => {
-                    router.pushUrl({
+                    this.getUIContext().getRouter().pushUrl({
                       url: 'pages/ArticleDetailPage',
                       params: { articleId: article.id }
                     });
@@ -127,7 +142,7 @@ export struct HomePage {
                   }
                 })
               }
-            }, (article: Article) => `${article.id}`)
+            }, (article: Article) => `${article.id}-${article.isStarred}-${article.isRead}`)
 
             // 加载更多
             ListItem() {

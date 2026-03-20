@@ -1,6 +1,5 @@
 // 添加订阅源页面
 import { router } from '@kit.ArkUI';
-import { UIContext } from '@kit.ArkUI';
 import { RssService } from '../service/RssService';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedGroup } from '../model/Models';
@@ -11,15 +10,17 @@ struct AddFeedPage {
   @State url: string = '';
   @State isProcessing: boolean = false;
   @State errorMsg: string = '';
-  @State previewTitle: string = '';
-  @State previewDesc: string = '';
-  @State previewArticleCount: number = 0;
   @State groups: FeedGroup[] = [];
   @State selectedGroupId: number = 1;
-  private uiCtx: UIContext | null = null;
+  @State @Watch('onShouldGoBack') shouldGoBack: boolean = false;
+
+  onShouldGoBack() {
+    if (this.shouldGoBack) {
+      this.getUIContext().getRouter().back();
+    }
+  }
 
   aboutToAppear() {
-    this.uiCtx = this.getUIContext();
     this.loadGroups();
   }
 
@@ -49,21 +50,16 @@ struct AddFeedPage {
       // 获取并解析订阅源
       const info = await RssService.getInstance().fetchFeedInfo(trimUrl);
       console.info('AddFeedPage', `Fetched feed: ${info.title}, articles: ${info.articles.length}`);
-      
+
       if (!info.title && info.articles.length === 0) {
         this.errorMsg = '解析成功但未获取到内容，请检查订阅源格式';
         this.isProcessing = false;
         return;
       }
 
-      // 显示预览
-      this.previewTitle = info.title || '（无标题）';
-      this.previewDesc = info.description || '';
-      this.previewArticleCount = info.articles.length;
-
-      // 保存到数据库
+      // 保存 Feed 元信息到数据库
       const db = DatabaseHelper.getInstance();
-      const feedId = await db.insertFeed({
+      let feedId = await db.insertFeed({
         title: info.title || trimUrl,
         url: trimUrl,
         siteUrl: info.siteUrl,
@@ -74,34 +70,58 @@ struct AddFeedPage {
       });
       console.info('AddFeedPage', `Feed inserted with id: ${feedId}`);
 
-      // 插入文章
-      for (const pa of info.articles) {
-        const coverImage = pa.coverImage || RssService.getInstance().extractFirstImage(pa.content);
-        await db.insertOrUpdateArticle({
-          feedId: feedId,
-          guid: pa.guid,
-          title: pa.title,
-          summary: pa.summary,
-          content: pa.content,
-          url: pa.url,
-          author: pa.author,
-          publishedAt: pa.publishedAt,
-          isRead: 0,
-          isStarred: 0,
-          coverImage: coverImage
-        });
+      // 实机：insert 成功返回新行 id（>= 1），ON_CONFLICT_IGNORE 冲突时返回 -1
+      // Previewer mock：insert 始终返回 0（模拟实现限制）
+      if (feedId === -1) {
+        // URL 已存在，查出已有 Feed 的 id
+        const existingFeed = await db.getFeedByUrl(trimUrl);
+        if (existingFeed && existingFeed.id) {
+          feedId = existingFeed.id;
+          console.info('AddFeedPage', `Feed already exists with id: ${feedId}`);
+        } else {
+          // 理论上不会走到这里，保险起见报错
+          this.errorMsg = '添加失败：数据库写入异常，请重试';
+          this.isProcessing = false;
+          return;
+        }
+      } else if (feedId === 0) {
+        // Previewer mock 环境：无法获取真实 id，直接继续（文章插入也会走 mock）
+        console.info('AddFeedPage', 'Running in Previewer mock, skipping real id lookup');
       }
-      console.info('AddFeedPage', `Inserted ${info.articles.length} articles`);
 
-      // 返回上一页
-      this.uiCtx?.runScopedTask(() => {
-        router.back();
+      // Feed 已保存，通过状态标志触发返回（避免在 async 中直接调用 router.back() 丢失 UI 上下文）
+      this.isProcessing = false;
+      this.shouldGoBack = true;
+
+      // 文章插入在后台异步执行，不阻塞页面跳转
+      const articles = info.articles;
+      const savedFeedId = feedId;
+      Promise.resolve().then(async () => {
+        for (const pa of articles) {
+          const coverImage = pa.coverImage || RssService.getInstance().extractFirstImage(pa.content);
+          await db.insertOrUpdateArticle({
+            feedId: savedFeedId,
+            guid: pa.guid,
+            title: pa.title,
+            summary: pa.summary,
+            content: pa.content,
+            url: pa.url,
+            author: pa.author,
+            publishedAt: pa.publishedAt,
+            isRead: 0,
+            isStarred: 0,
+            coverImage: coverImage
+          });
+        }
+        console.info('AddFeedPage', `Background: inserted ${articles.length} articles for feed ${savedFeedId}`);
+      }).catch((e: Error) => {
+        console.error('AddFeedPage', `Background article insert error: ${e?.message || String(e)}`);
       });
+
     } catch (e) {
-      const err = e as Error;
-      console.error('AddFeedPage', `Error: ${err?.message || String(e)}`);
-      this.errorMsg = `添加失败：${err?.message || String(e)}`;
-    } finally {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.error('AddFeedPage', `Error: ${msg}`);
+      this.errorMsg = `添加失败：${msg}`;
       this.isProcessing = false;
     }
   }
@@ -111,13 +131,13 @@ struct AddFeedPage {
       // 导航栏
       Row() {
         Button({ type: ButtonType.Circle }) {
-          Image($r('app.media.ic_back'))
-            .width(20).height(20)
-            .fillColor($r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r('sys.symbol.arrow_left'))
+            .fontSize(20)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36).height(36)
         .backgroundColor(Color.Transparent)
-        .onClick(() => router.back())
+        .onClick(() => this.getUIContext().getRouter().back())
 
         Text('添加订阅源')
           .fontSize(18)
@@ -143,7 +163,6 @@ struct AddFeedPage {
               .onChange((val) => {
                 this.url = val;
                 this.errorMsg = '';
-                this.previewTitle = '';
               })
               .onSubmit(() => this.addFeed())
               .borderRadius(8)

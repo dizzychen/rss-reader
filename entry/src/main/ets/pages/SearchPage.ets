@@ -11,10 +11,26 @@ export struct SearchPage {
   @State isSearching: boolean = false;
   @State feeds: Feed[] = [];
   @State selectedFeedId: number = -1;
+  @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
   private debounceTimer: number = -1;
 
   aboutToAppear() {
-    DatabaseHelper.getInstance().getAllFeeds().then(f => this.feeds = f);
+    this.loadFeeds();
+  }
+
+  aboutToDisappear() {
+    if (this.debounceTimer !== -1) {
+      clearTimeout(this.debounceTimer);
+      this.debounceTimer = -1;
+    }
+  }
+
+  onRefreshTickChanged() {
+    this.loadFeeds();
+  }
+
+  async loadFeeds() {
+    this.feeds = await DatabaseHelper.getInstance().getAllFeeds();
   }
 
   doSearch(kw: string) {
@@ -120,7 +136,7 @@ export struct SearchPage {
                 ArticleItemComponent({
                   article: article,
                   onTap: () => {
-                    router.pushUrl({
+                    this.getUIContext().getRouter().pushUrl({
                       url: 'pages/ArticleDetailPage',
                       params: { articleId: article.id }
                     });
@@ -133,7 +149,7 @@ export struct SearchPage {
                   }
                 })
               }
-            }, (a: Article) => `${a.id}`)
+            }, (a: Article) => `${a.id}-${a.isStarred}-${a.isRead}`)
           }
           .divider({ strokeWidth: 0.5, color: $r('sys.color.ohos_id_color_list_separator') })
           .layoutWeight(1)

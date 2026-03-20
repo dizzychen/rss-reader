@@ -1,29 +1,32 @@
-// 文章详情页（内置阅读器）
+// 文章详情页（原生 ArkTS 渲染，无需 WebView/ArkWeb）
 import { router } from '@kit.ArkUI';
-import { webview } from '@kit.ArkWeb';
 import { Article } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { RssService } from '../service/RssService';
 import { SettingsService } from '../service/SettingsService';
 import { Constants } from '../constants/Constants';
+import { common } from '@kit.AbilityKit';
+import { Want } from '@kit.AbilityKit';
 
 @Entry
 @Component
 struct ArticleDetailPage {
   @State article: Article | null = null;
-  @State fontSizeIndex: number = 1; // 默认「中」
+  @State fontSizeIndex: number = 1;
   @State isStarred: boolean = false;
-  controller: webview.WebviewController = new webview.WebviewController();
+  @State bodyText: string = '';
   private articleId: number = -1;
 
   aboutToAppear() {
-    const params = router.getParams() as Record<string, number>;
-    this.articleId = params['articleId'] ?? -1;
+    const params = this.getUIContext().getRouter().getParams();
+    if (params && typeof (params as Record<string, number>)['articleId'] === 'number') {
+      this.articleId = (params as Record<string, number>)['articleId'];
+    }
     this.loadArticle();
-    this.loadSettings();
+    this.loadFontSize();
   }
 
-  async loadSettings() {
+  async loadFontSize() {
     const settings = await SettingsService.getInstance().getSettings();
     const idx = Constants.FONT_SIZES.indexOf(settings.fontSize);
     this.fontSizeIndex = idx >= 0 ? idx : 1;
@@ -34,52 +37,49 @@ struct ArticleDetailPage {
     this.article = await db.getArticleById(this.articleId);
     if (this.article) {
       this.isStarred = this.article.isStarred === 1;
-      // 标记已读
       if (this.article.isRead === 0) {
         await db.markRead(this.articleId, 1);
       }
+      // 将 HTML 内容转换为适合 ArkTS Text 渲染的纯文本
+      const raw = this.article.content || this.article.summary || '';
+      this.bodyText = this.htmlToReadableText(raw);
     }
   }
 
-  buildHtml(): string {
-    if (!this.article) return '';
-    const fontSize = Constants.FONT_SIZES[this.fontSizeIndex];
-    const content = this.article.content || `<p>${this.article.summary}</p>`;
-    return `<!DOCTYPE html>
-<html>
-<head>
-<meta charset="UTF-8">
-<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=3.0">
-<style>
-  * { box-sizing: border-box; }
-  body {
-    font-family: -apple-system, 'PingFang SC', sans-serif;
-    font-size: ${fontSize}px;
-    line-height: 1.8;
-    color: #1a1a1a;
-    background: #ffffff;
-    margin: 0;
-    padding: 16px;
-    word-break: break-word;
-  }
-  h1,h2,h3,h4 { font-weight: 600; line-height: 1.4; }
-  a { color: #007AFF; }
-  img { max-width: 100%; height: auto; border-radius: 8px; margin: 8px 0; }
-  pre { background: #f5f5f5; padding: 12px; border-radius: 8px; overflow-x: auto; font-size: 13px; }
-  code { background: #f0f0f0; padding: 2px 4px; border-radius: 4px; font-size: 0.9em; }
-  blockquote { border-left: 4px solid #007AFF; margin: 0; padding-left: 16px; color: #555; }
-  figure { margin: 0; }
-  .meta { color: #888; font-size: 13px; margin-bottom: 16px; border-bottom: 1px solid #eee; padding-bottom: 12px; }
-</style>
-</head>
-<body>
-  <div class="meta">
-    ${this.article.author ? `<span>${this.article.author}</span> · ` : ''}
-    <span>${RssService.getInstance().formatDate(this.article.publishedAt)}</span>
-  </div>
-  ${content}
-</body>
-</html>`;
+  /**
+   * 将 HTML 转换为可读纯文本：
+   * - 块级标签（p / div / h1-h6 / li / br）转换为换行
+   * - 去除所有剩余 HTML 标签
+   * - 解码常见 HTML 实体
+   * - 合并多余空行
+   */
+  private htmlToReadableText(html: string): string {
+    // 块级标签前后插入换行
+    let text = html
+      .replace(/<br\s*\/?>/gi, '\n')
+      .replace(/<\/p>/gi, '\n\n')
+      .replace(/<\/div>/gi, '\n')
+      .replace(/<\/h[1-6]>/gi, '\n\n')
+      .replace(/<h[1-6][^>]*>/gi, '\n')
+      .replace(/<\/li>/gi, '\n')
+      .replace(/<li[^>]*>/gi, '• ')
+      .replace(/<\/tr>/gi, '\n')
+      .replace(/<\/blockquote>/gi, '\n')
+      // 去除所有剩余标签
+      .replace(/<[^>]+>/g, '')
+      // 解码 HTML 实体
+      .replace(/&amp;/g, '&')
+      .replace(/&lt;/g, '<')
+      .replace(/&gt;/g, '>')
+      .replace(/&quot;/g, '"')
+      .replace(/&apos;/g, "'")
+      .replace(/&nbsp;/g, ' ')
+      .replace(/&#(\d+);/g, (_m: string, code: string) => String.fromCharCode(parseInt(code, 10)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_m: string, code: string) => String.fromCharCode(parseInt(code, 16)))
+      // 合并超过两个连续换行
+      .replace(/\n{3,}/g, '\n\n')
+      .trim();
+    return text;
   }
 
   build() {
@@ -87,12 +87,14 @@ struct ArticleDetailPage {
       // 导航栏
       Row() {
         Button({ type: ButtonType.Circle }) {
-          Image($r('app.media.ic_back')).width(20).height(20).fillColor($r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r('sys.symbol.arrow_left'))
+            .fontSize(20)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36).height(36).backgroundColor(Color.Transparent)
-        .onClick(() => router.back())
+        .onClick(() => this.getUIContext().getRouter().back())
 
-        Text(this.article?.title ?? '')
+        Text(this.article?.title ?? '加载中...')
           .fontSize(16)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('sys.color.ohos_id_color_text_primary'))
@@ -101,22 +103,24 @@ struct ArticleDetailPage {
           .layoutWeight(1)
           .margin({ left: 8, right: 8 })
 
-        // 字体大小
+        // 字体大小循环切换
         Button({ type: ButtonType.Circle }) {
-          Image($r('app.media.ic_font')).width(20).height(20).fillColor($r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r('sys.symbol.textformat'))
+            .fontSize(20)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36).height(36).backgroundColor(Color.Transparent)
         .onClick(() => {
           this.fontSizeIndex = (this.fontSizeIndex + 1) % Constants.FONT_SIZES.length;
-          SettingsService.getInstance().setSetting(Constants.PREF_FONT_SIZE, Constants.FONT_SIZES[this.fontSizeIndex]);
-          this.controller.loadData(this.buildHtml(), 'text/html', 'UTF-8');
+          SettingsService.getInstance()
+            .setSetting(Constants.PREF_FONT_SIZE, Constants.FONT_SIZES[this.fontSizeIndex]);
         })
 
         // 收藏
         Button({ type: ButtonType.Circle }) {
-          Image(this.isStarred ? $r('app.media.ic_star_filled') : $r('app.media.ic_star'))
-            .width(20).height(20)
-            .fillColor(this.isStarred ? Color.Orange : $r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r(this.isStarred ? 'sys.symbol.star_fill' : 'sys.symbol.star'))
+            .fontSize(20)
+            .fontColor([this.isStarred ? Color.Orange : $r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36).height(36).backgroundColor(Color.Transparent)
         .onClick(async () => {
@@ -125,14 +129,25 @@ struct ArticleDetailPage {
           this.isStarred = !this.isStarred;
         })
 
-        // 查看原文
+        // 查看原文（在系统浏览器中打开）
         Button({ type: ButtonType.Circle }) {
-          Image($r('app.media.ic_open_link')).width(20).height(20).fillColor($r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r('sys.symbol.link'))
+            .fontSize(20)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36).height(36).backgroundColor(Color.Transparent)
         .onClick(() => {
           if (this.article?.url) {
-            this.controller.loadUrl(this.article.url);
+            const want: Want = {
+              action: 'ohos.want.action.viewData',
+              uri: this.article.url
+            };
+            const ctx = this.getUIContext().getHostContext();
+            if (ctx) {
+              (ctx as common.UIAbilityContext).startAbility(want).catch((e: Error) => {
+                console.error('ArticleDetailPage', `打开原文失败: ${e.message}`);
+              });
+            }
           }
         })
       }
@@ -143,33 +158,55 @@ struct ArticleDetailPage {
 
       Divider().color($r('sys.color.ohos_id_color_list_separator'))
 
-      // 标题区
-      if (this.article) {
-        Column({ space: 8 }) {
-          Text(this.article.title)
-            .fontSize(20)
-            .fontWeight(FontWeight.Bold)
-            .fontColor($r('sys.color.ohos_id_color_text_primary'))
-            .lineHeight(28)
+      if (this.article === null) {
+        // 加载中
+        Column() {
+          LoadingProgress().width(40).height(40)
+          Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
         }
-        .width('100%')
-        .padding({ left: 16, right: 16, top: 16, bottom: 8 })
-        .backgroundColor($r('sys.color.ohos_id_color_background'))
-      }
+        .width('100%').layoutWeight(1).justifyContent(FlexAlign.Center)
+      } else {
+        Scroll() {
+          Column({ space: 0 }) {
+            // 标题
+            Text(this.article.title)
+              .fontSize(Constants.FONT_SIZES[this.fontSizeIndex] + 4)
+              .fontWeight(FontWeight.Bold)
+              .fontColor($r('sys.color.ohos_id_color_text_primary'))
+              .lineHeight((Constants.FONT_SIZES[this.fontSizeIndex] + 4) * 1.4)
+              .width('100%')
 
-      // WebView 正文
-      Web({
-        src: '',
-        controller: this.controller
-      })
-        .layoutWeight(1)
-        .onPageBegin(() => {})
-        .onControllerAttached(() => {
-          if (this.article) {
-            this.controller.loadData(this.buildHtml(), 'text/html', 'UTF-8');
+            // 元信息行
+            Row({ space: 8 }) {
+              if (this.article.author) {
+                Text(this.article.author)
+                  .fontSize(12)
+                  .fontColor($r('sys.color.ohos_id_color_activated'))
+                  .maxLines(1)
+              }
+              Text(RssService.getInstance().formatDate(this.article.publishedAt))
+                .fontSize(12)
+                .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+            }
+            .width('100%')
+            .margin({ top: 8, bottom: 16 })
+
+            Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ bottom: 16 })
+
+            // 正文
+            Text(this.bodyText || this.article.summary || '（暂无内容）')
+              .fontSize(Constants.FONT_SIZES[this.fontSizeIndex])
+              .fontColor($r('sys.color.ohos_id_color_text_primary'))
+              .lineHeight(Constants.FONT_SIZES[this.fontSizeIndex] * 1.8)
+              .width('100%')
+              .wordBreak(WordBreak.BREAK_WORD)
           }
-        })
-        .javaScriptAccess(false)
+          .width('100%')
+          .padding({ left: 16, right: 16, top: 16, bottom: 32 })
+        }
+        .layoutWeight(1)
+        .scrollBar(BarState.Auto)
+      }
     }
     .width('100%')
     .height('100%')

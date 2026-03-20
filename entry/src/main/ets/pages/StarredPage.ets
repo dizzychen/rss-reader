@@ -1,6 +1,6 @@
 // 收藏页
 import { router } from '@kit.ArkUI';
-import { Article } from '../model/Models';
+import { Article, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
 
@@ -8,17 +8,39 @@ import { ArticleItemComponent } from '../components/ArticleItemComponent';
 export struct StarredPage {
   @State articles: Article[] = [];
   @State isLoading: boolean = true;
+  @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
 
   aboutToAppear() {
     this.loadData();
   }
 
+  onRefreshTickChanged() {
+    this.loadData();
+  }
+
   async loadData() {
-    this.isLoading = true;
+    // 只有列表当前为空时才显示 loading spinner，避免刷新时页面抖动
+    const showSpinner = this.articles.length === 0;
+    if (showSpinner) {
+      this.isLoading = true;
+    }
     try {
-      this.articles = await DatabaseHelper.getInstance().getStarredArticles(200);
+      const db = DatabaseHelper.getInstance();
+      const articles = await db.getStarredArticles(200);
+      // 附加 feedTitle
+      const feeds: Feed[] = await db.getAllFeeds();
+      const feedMap = new Map<number, string>();
+      for (const f of feeds) {
+        feedMap.set(f.id!, f.title);
+      }
+      for (const a of articles) {
+        a.feedTitle = feedMap.get(a.feedId) ?? '';
+      }
+      this.articles = articles;
     } finally {
-      this.isLoading = false;
+      if (showSpinner) {
+        this.isLoading = false;
+      }
     }
   }
 
@@ -55,18 +77,19 @@ export struct StarredPage {
               ArticleItemComponent({
                 article: article,
                 onTap: () => {
-                  router.pushUrl({
+                  this.getUIContext().getRouter().pushUrl({
                     url: 'pages/ArticleDetailPage',
                     params: { articleId: article.id }
-                  }).then((): void => { this.loadData(); });
+                  });
                 },
                 onStarToggle: async (): Promise<void> => {
+                  // 直接从本地列表移除，无需重新查询数据库，避免抖动
                   await DatabaseHelper.getInstance().toggleStar(article.id!, 0);
-                  await this.loadData();
+                  this.articles = this.articles.filter(a => a.id !== article.id);
                 }
               })
             }
-          }, (a: Article) => `${a.id}`)
+          }, (a: Article) => `${a.id}-${a.isStarred}-${a.isRead}`)
         }
         .width('100%')
         .layoutWeight(1)

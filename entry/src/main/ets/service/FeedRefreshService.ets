@@ -20,7 +20,6 @@ export class FeedRefreshService {
    */
   async refreshAll(context: common.Context): Promise<number> {
     const db = DatabaseHelper.getInstance();
-    const rss = RssService.getInstance();
     const settings = await SettingsService.getInstance().getSettings();
 
     const feeds = await db.getAllFeeds();
@@ -28,7 +27,7 @@ export class FeedRefreshService {
 
     for (const feed of feeds) {
       try {
-        const count = await this.refreshSingleFeed(feed, context);
+        const count = await this.refreshSingleFeed(feed);
         newArticleCount += count;
         // 清理旧缓存
         await db.cleanOldCache(feed.id!, settings.cacheCountPerFeed);
@@ -47,8 +46,7 @@ export class FeedRefreshService {
   /**
    * 刷新单个订阅源，返回新增文章数
    */
-  async refreshSingleFeed(feed: Feed, context?: common.Context): Promise<number> {
-    const db = DatabaseHelper.getInstance();
+  async refreshSingleFeed(feed: Feed): Promise<number> {
     const rss = RssService.getInstance();
 
     const parsed = await rss.refreshFeed(feed.url);
@@ -56,7 +54,7 @@ export class FeedRefreshService {
 
     for (const pa of parsed.articles) {
       const coverImage = pa.coverImage || rss.extractFirstImage(pa.content);
-      const rowId = await db.insertOrUpdateArticle({
+      const rowId = await DatabaseHelper.getInstance().insertOrUpdateArticle({
         feedId: feed.id!,
         guid: pa.guid,
         title: pa.title,
@@ -73,7 +71,7 @@ export class FeedRefreshService {
     }
 
     // 更新订阅源元信息
-    await db.updateFeed({
+    await DatabaseHelper.getInstance().updateFeed({
       id: feed.id,
       url: feed.url,
       groupId: feed.groupId,

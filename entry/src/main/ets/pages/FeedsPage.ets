@@ -10,15 +10,42 @@ export struct FeedsPage {
   @State feeds: Feed[] = [];
   @State unreadMap: Map<number, number> = new Map();
   @State isRefreshing: boolean = false;
+  @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
 
   aboutToAppear() {
     this.loadData();
   }
 
+  aboutToDisappear() {
+    // 嵌入式组件在 Tab 切换时不会被销毁，此处可以不做任何处理
+  }
+
+  private onFeedAdded(): void {
+    this.loadData();
+  }
+
+  onRefreshTickChanged() {
+    console.info('FeedsPage', `onRefreshTickChanged triggered, refreshTick: ${this.refreshTick}`);
+    this.loadData();
+  }
+
   async loadData() {
     const db = DatabaseHelper.getInstance();
-    this.groups = await db.getAllGroups();
     this.feeds = await db.getAllFeeds();
+    let groups = await db.getAllGroups();
+    // 确保所有 feed 都能找到对应的分组，避免因 groupId 不匹配而消失
+    const groupIds = new Set(groups.map(g => g.id!));
+    const hasOrphanFeeds = this.feeds.some(f => !groupIds.has(f.groupId));
+    if (hasOrphanFeeds) {
+      // 将孤立 feed 的 groupId 修正为第一个分组 id
+      const firstGroupId = groups.length > 0 ? groups[0].id! : 1;
+      for (const feed of this.feeds) {
+        if (!groupIds.has(feed.groupId)) {
+          feed.groupId = firstGroupId;
+        }
+      }
+    }
+    this.groups = groups;
     const map = new Map<number, number>();
     for (const feed of this.feeds) {
       map.set(feed.id!, await db.getUnreadCountByFeed(feed.id!));
@@ -48,10 +75,9 @@ export struct FeedsPage {
           LoadingProgress().width(24).height(24)
         } else {
           Button({ type: ButtonType.Circle }) {
-            Image($r('app.media.ic_refresh'))
-              .width(20)
-              .height(20)
-              .fillColor($r('sys.color.ohos_id_color_text_primary'))
+            SymbolGlyph($r('sys.symbol.arrow_clockwise'))
+              .fontSize(20)
+              .fontColor([$r('sys.color.ohos_id_color_text_primary')])
           }
           .width(36)
           .height(36)
@@ -59,7 +85,7 @@ export struct FeedsPage {
           .onClick(async () => {
             this.isRefreshing = true;
             try {
-              await FeedRefreshService.getInstance().refreshAll(getContext(this));
+              await FeedRefreshService.getInstance().refreshAll(this.getUIContext().getHostContext()!);
               await this.loadData();
             } finally {
               this.isRefreshing = false;
@@ -67,18 +93,16 @@ export struct FeedsPage {
           })
         }
         Button({ type: ButtonType.Circle }) {
-          Image($r('app.media.ic_add'))
-            .width(20)
-            .height(20)
-            .fillColor($r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r('sys.symbol.plus'))
+            .fontSize(20)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36)
         .height(36)
         .backgroundColor(Color.Transparent)
         .margin({ left: 4 })
         .onClick(() => {
-          router.pushUrl({ url: 'pages/AddFeedPage' })
-            .then((): void => { this.loadData(); });
+          this.getUIContext().getRouter().pushUrl({ url: 'pages/AddFeedPage' });
         })
       }
       .width('100%')
@@ -94,9 +118,18 @@ export struct FeedsPage {
           Button('添加第一个RSS源')
             .fontSize(14)
             .onClick(() => {
-              router.pushUrl({ url: 'pages/AddFeedPage' })
-                .then((): void => { this.loadData(); });
+              this.getUIContext().getRouter().pushUrl({ url: 'pages/AddFeedPage' });
             })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else if (this.groups.length === 0) {
+        // 数据库异常：groups 表为空，无法显示分组下的 feed
+        Column({ space: 16 }) {
+          Text('数据加载异常').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          Text('分组数据缺失，请重启应用').fontSize(12).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+          Button('重新加载').fontSize(14).onClick(() => this.loadData())
         }
         .width('100%')
         .layoutWeight(1)
@@ -200,10 +233,10 @@ export struct FeedsPage {
     .padding({ left: 16, right: 16 })
     .backgroundColor($r('sys.color.ohos_id_color_background'))
     .onClick(() => {
-      router.pushUrl({
+      this.getUIContext().getRouter().pushUrl({
         url: 'pages/FeedArticlesPage',
         params: { feedId: feed.id }
-      }).then((): void => { this.loadData(); });
+      });
     })
   }
 
@@ -216,7 +249,7 @@ export struct FeedsPage {
       .height(64)
       .padding({ left: 16, right: 16 })
       .onClick(() => {
-        AlertDialog.show({
+        this.getUIContext().showAlertDialog({
           title: '删除订阅源',
           message: `确定删除「${feedTitle}」？相关文章也会被删除。`,
           primaryButton: {

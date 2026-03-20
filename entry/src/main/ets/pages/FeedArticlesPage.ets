@@ -15,9 +15,18 @@ struct FeedArticlesPage {
   private feedId: number = -1;
 
   aboutToAppear() {
-    const params = router.getParams() as Record<string, number>;
-    this.feedId = params['feedId'] ?? -1;
+    const params = this.getUIContext().getRouter().getParams();
+    if (params && typeof (params as Record<string, number>)['feedId'] === 'number') {
+      this.feedId = (params as Record<string, number>)['feedId'];
+    }
     this.loadData();
+  }
+
+  onPageShow(): void {
+    // 从 ArticleDetailPage 返回时刷新已读状态
+    if (this.feedId > 0) {
+      this.loadData();
+    }
   }
 
   async loadData() {
@@ -46,10 +55,12 @@ struct FeedArticlesPage {
       // 导航栏
       Row() {
         Button({ type: ButtonType.Circle }) {
-          Image($r('app.media.ic_back')).width(20).height(20).fillColor($r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r('sys.symbol.arrow_left'))
+            .fontSize(20)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36).height(36).backgroundColor(Color.Transparent)
-        .onClick(() => router.back())
+        .onClick(() => this.getUIContext().getRouter().back())
 
         Text(this.feed?.title ?? '加载中...')
           .fontSize(17)
@@ -62,11 +73,13 @@ struct FeedArticlesPage {
 
         // 全部标记已读
         Button({ type: ButtonType.Circle }) {
-          Image($r('app.media.ic_mark_read')).width(20).height(20).fillColor($r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r('sys.symbol.checkmark'))
+            .fontSize(20)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36).height(36).backgroundColor(Color.Transparent)
         .onClick(() => {
-          AlertDialog.show({
+          this.getUIContext().showAlertDialog({
             title: '标记全部已读',
             message: '将该订阅源所有文章标记为已读？',
             primaryButton: {
@@ -103,10 +116,10 @@ struct FeedArticlesPage {
                 ArticleItemComponent({
                   article: article,
                   onTap: () => {
-                    router.pushUrl({
+                    this.getUIContext().getRouter().pushUrl({
                       url: 'pages/ArticleDetailPage',
                       params: { articleId: article.id }
-                    }).then((): void => { this.loadData(); });
+                    });
                   },
                   onStarToggle: async (): Promise<void> => {
                     const newStar = article.isStarred === 1 ? 0 : 1;
@@ -116,7 +129,7 @@ struct FeedArticlesPage {
                   }
                 })
               }
-            }, (a: Article) => `${a.id}`)
+            }, (a: Article) => `${a.id}-${a.isStarred}-${a.isRead}`)
           }
           .divider({ strokeWidth: 0.5, color: $r('sys.color.ohos_id_color_list_separator') })
         }

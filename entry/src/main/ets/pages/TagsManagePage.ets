@@ -34,10 +34,12 @@ struct TagsManagePage {
     Column() {
       Row() {
         Button({ type: ButtonType.Circle }) {
-          Image($r('app.media.ic_back')).width(20).height(20).fillColor($r('sys.color.ohos_id_color_text_primary'))
+          SymbolGlyph($r('sys.symbol.arrow_left'))
+            .fontSize(20)
+            .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36).height(36).backgroundColor(Color.Transparent)
-        .onClick(() => router.back())
+        .onClick(() => this.getUIContext().getRouter().back())
 
         Text('标签管理')
           .fontSize(18)
@@ -84,11 +86,13 @@ struct TagsManagePage {
                   .fontColor($r('sys.color.ohos_id_color_text_primary'))
                   .layoutWeight(1)
                 Button({ type: ButtonType.Circle }) {
-                  Image($r('app.media.ic_delete')).width(18).height(18).fillColor(Color.Red)
+                  SymbolGlyph($r('sys.symbol.trash'))
+                    .fontSize(18)
+                    .fontColor([Color.Red])
                 }
                 .width(32).height(32).backgroundColor(Color.Transparent)
                 .onClick(() => {
-                  AlertDialog.show({
+                  this.getUIContext().showAlertDialog({
                     title: '删除标签',
                     message: `删除标签「${tag.name}」？文章关联也会解除。`,
                     primaryButton: {
