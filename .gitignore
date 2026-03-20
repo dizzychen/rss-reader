@@ -10,3 +10,12 @@
 /.clang-tidy
 **/.test
 /.appanalyzer
+
+# CodeBuddy 工具缓存
+/.codebuddy
+
+# 临时调试/调查文档
+/FIXES_SUMMARY.md
+/QUICK_REFERENCE.md
+/TESTING.md
+/WEBVIEW_INVESTIGATION.md
