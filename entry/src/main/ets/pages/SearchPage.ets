@@ -144,8 +144,11 @@ export struct SearchPage {
                   onStarToggle: async () => {
                     const newStar = article.isStarred === 1 ? 0 : 1;
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
-                    article.isStarred = newStar;
-                    this.results = [...this.results];
+                    const idx = this.results.findIndex(a => a.id === article.id);
+                    if (idx >= 0) {
+                      this.results[idx] = { ...article, isStarred: newStar };
+                      this.results = [...this.results];
+                    }
                   }
                 })
               }

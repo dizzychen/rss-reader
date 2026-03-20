@@ -124,8 +124,11 @@ struct FeedArticlesPage {
                   onStarToggle: async (): Promise<void> => {
                     const newStar = article.isStarred === 1 ? 0 : 1;
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
-                    article.isStarred = newStar;
-                    this.articles = [...this.articles];
+                    const idx = this.articles.findIndex(a => a.id === article.id);
+                    if (idx >= 0) {
+                      this.articles[idx] = { ...article, isStarred: newStar };
+                      this.articles = [...this.articles];
+                    }
                   }
                 })
               }
