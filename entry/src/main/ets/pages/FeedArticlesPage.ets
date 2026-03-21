@@ -11,7 +11,7 @@ struct FeedArticlesPage {
   @State feed: Feed | null = null;
   @State articles: Article[] = [];
   @State isRefreshing: boolean = false;
-  @State onlyUnread: boolean = false;
+  @State onlyUnread: boolean = true;
   private feedId: number = -1;
 
   aboutToAppear() {
@@ -71,6 +71,12 @@ struct FeedArticlesPage {
           .margin({ left: 8 })
           .layoutWeight(1)
 
+        Toggle({ type: ToggleType.Switch, isOn: this.onlyUnread })
+          .onChange((isOn) => {
+            this.onlyUnread = isOn;
+            this.loadData();
+          })
+
         // 全部标记已读
         Button({ type: ButtonType.Circle }) {
           SymbolGlyph($r('sys.symbol.checkmark'))
@@ -126,7 +132,14 @@ struct FeedArticlesPage {
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
                     const idx = this.articles.findIndex(a => a.id === article.id);
                     if (idx >= 0) {
-                      this.articles[idx] = { ...article, isStarred: newStar };
+                      const updated: Article = {
+                        id: article.id, feedId: article.feedId, feedTitle: article.feedTitle,
+                        guid: article.guid, title: article.title, summary: article.summary,
+                        content: article.content, url: article.url, author: article.author,
+                        publishedAt: article.publishedAt, isRead: article.isRead,
+                        isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt
+                      };
+                      this.articles[idx] = updated;
                       this.articles = [...this.articles];
                     }
                   }

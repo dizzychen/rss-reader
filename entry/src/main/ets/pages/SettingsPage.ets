@@ -3,6 +3,9 @@ import { router } from '@kit.ArkUI';
 import { SettingsService } from '../service/SettingsService';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { Constants } from '../constants/Constants';
+import { OPMLService } from '../service/OPMLService';
+import { OPMLFileHelper } from '../service/OPMLFileHelper';
+import { common } from '@kit.AbilityKit';
 
 interface SelectOption {
   value: ResourceStr;
@@ -19,6 +22,8 @@ struct SettingsPage {
   @State openOriginalInApp: boolean = true;
   @State cacheCountIndex: number = 1;        // 默认 50 篇
   @State loaded: boolean = false;
+  @State isExporting: boolean = false;
+  @State isImporting: boolean = false;
 
   aboutToAppear() {
     this.loadSettings();
@@ -220,6 +225,69 @@ struct SettingsPage {
             }
             .backgroundColor($r('sys.color.ohos_id_color_background')).borderRadius(12)
 
+            // ===== 备份与恢复 =====
+            this.sectionHeader('备份与恢复')
+            Column() {
+              Row() {
+                Column({ space: 2 }) {
+                  Text(this.isExporting ? '导出中...' : '导出订阅源')
+                    .fontSize(15)
+                    .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                  Text('将订阅源保存为 OPML 文件')
+                    .fontSize(12)
+                    .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+
+                if (this.isExporting) {
+                  LoadingProgress().width(20).height(20)
+                } else {
+                  SymbolGlyph($r('sys.symbol.arrow_up'))
+                    .fontSize(18)
+                    .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                }
+              }
+              .width('100%').height(60).padding({ left: 16, right: 16 })
+              .opacity(this.isExporting ? 0.5 : 1.0)
+              .onClick(() => {
+                if (!this.isExporting) {
+                  this.exportOPML();
+                }
+              })
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
+              Row() {
+                Column({ space: 2 }) {
+                  Text(this.isImporting ? '导入中...' : '导入订阅源')
+                    .fontSize(15)
+                    .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                  Text('从 OPML 文件批量添加订阅')
+                    .fontSize(12)
+                    .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                }
+                .layoutWeight(1)
+                .alignItems(HorizontalAlign.Start)
+
+                if (this.isImporting) {
+                  LoadingProgress().width(20).height(20)
+                } else {
+                  SymbolGlyph($r('sys.symbol.arrow_down'))
+                    .fontSize(18)
+                    .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                }
+              }
+              .width('100%').height(60).padding({ left: 16, right: 16 })
+              .opacity(this.isImporting ? 0.5 : 1.0)
+              .onClick(() => {
+                if (!this.isImporting) {
+                  this.importOPML();
+                }
+              })
+            }
+            .backgroundColor($r('sys.color.ohos_id_color_background')).borderRadius(12)
+
             // ===== 关于 =====
             this.sectionHeader('关于')
             Column() {
@@ -251,4 +319,84 @@ struct SettingsPage {
       .width('100%')
       .padding({ left: 4, bottom: 4 })
   }
+
+  private async exportOPML() {
+    this.isExporting = true;
+    try {
+      const feeds = await DatabaseHelper.getInstance().getAllFeeds();
+      if (feeds.length === 0) {
+        this.getUIContext().getPromptAction().showToast({ message: '没有订阅源可导出' });
+        return;
+      }
+
+      const opmlContent = OPMLService.getInstance().generateOPML(feeds);
+      const filename = OPMLService.getInstance().generateOPMLFilename();
+
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const filePath = await OPMLFileHelper.saveOPMLFile(ctx, opmlContent, filename);
+
+      console.info('SettingsPage', `OPML exported to: ${filePath}`);
+      this.getUIContext().getPromptAction().showToast({
+        message: `导出成功，共 ${feeds.length} 个订阅源`
+      });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === '用户取消保存') {
+        return;
+      }
+      console.error('SettingsPage', `Export OPML failed: ${msg}`);
+      this.getUIContext().getPromptAction().showToast({ message: `导出失败：${msg}` });
+    } finally {
+      this.isExporting = false;
+    }
+  }
+
+  private async importOPML() {
+    this.isImporting = true;
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+
+      // 1. 打开文件选择器
+      const fileUri = await OPMLFileHelper.selectOPMLFile(ctx);
+
+      // 2. 读取文件内容
+      const opmlContent = await OPMLFileHelper.readOPMLFile(fileUri);
+
+      // 3. 解析 OPML
+      const items = OPMLService.getInstance().parseOPML(opmlContent);
+      if (items.length === 0) {
+        this.getUIContext().getPromptAction().showToast({ message: '文件中未找到有效的 RSS 订阅' });
+        return;
+      }
+
+      // 4. 批量导入（使用默认分组 id=1）
+      const result = await OPMLService.getInstance().importFeeds(items, 1);
+
+      // 5. 显示导入结果
+      const total = items.length;
+      let msg = `解析 ${total} 个订阅，成功 ${result.success} 个`;
+      if (result.skipped > 0) {
+        msg += `，跳过 ${result.skipped} 个`;
+      }
+      if (result.failed > 0) {
+        msg += `，失败 ${result.failed} 个`;
+      }
+      this.getUIContext().getPromptAction().showToast({ message: msg });
+
+      if (result.errors.length > 0) {
+        console.warn('SettingsPage', 'OPML import errors:', result.errors.join('\n'));
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === '未选择文件') {
+        // 用户取消选择，不显示错误
+        return;
+      }
+      console.error('SettingsPage', `Import OPML failed: ${msg}`);
+      this.getUIContext().getPromptAction().showToast({ message: `导入失败：${msg}` });
+    } finally {
+      this.isImporting = false;
+    }
+  }
 }
+

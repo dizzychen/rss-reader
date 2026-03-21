@@ -46,11 +46,7 @@ export struct FeedsPage {
       }
     }
     this.groups = groups;
-    const map = new Map<number, number>();
-    for (const feed of this.feeds) {
-      map.set(feed.id!, await db.getUnreadCountByFeed(feed.id!));
-    }
-    this.unreadMap = map;
+    this.unreadMap = await db.getUnreadCountAllFeeds();
   }
 
   getFeedsInGroup(groupId: number): Feed[] {

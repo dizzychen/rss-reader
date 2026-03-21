@@ -1,6 +1,20 @@
 {
   "app": {
-    "signingConfigs": [],
+    "signingConfigs": [
+      {
+        "name": "default",
+        "type": "HarmonyOS",
+        "material": {
+          "certpath": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "0000001B4C9E6169B3D8F5E5885CD2617619CBB03FF3BEFB2568321C0F35C5CA54D47D556004B8064EB314",
+          "profile": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.p7b",
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.p12",
+          "storePassword": "0000001B95332B6DE4185C17D47B2A5F6A4227EAD8DC48CD8989D1D7639E0CB32609FC59211BF6946C2371"
+        }
+      }
+    ],
     "products": [
       {
         "name": "default",

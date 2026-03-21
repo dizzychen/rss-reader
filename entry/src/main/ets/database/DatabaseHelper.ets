@@ -263,6 +263,21 @@ export class DatabaseHelper {
     return count;
   }
 
+  /** 一次性查询所有订阅源的未读数，返回 feedId → unreadCount 的 Map，避免 N+1 查询 */
+  async getUnreadCountAllFeeds(): Promise<Map<number, number>> {
+    const map = new Map<number, number>();
+    if (!this.rdbStore) return map;
+    const sql = `SELECT feed_id, COUNT(*) AS cnt FROM ${Constants.TABLE_ARTICLES} WHERE is_read = 0 GROUP BY feed_id`;
+    const result = await this.rdbStore.querySql(sql, []);
+    while (result.goToNextRow()) {
+      const feedId = result.getLong(result.getColumnIndex('feed_id'));
+      const cnt = result.getLong(result.getColumnIndex('cnt'));
+      map.set(feedId, cnt);
+    }
+    result.close();
+    return map;
+  }
+
   private rowToFeed(result: relationalStore.ResultSet): Feed {
     return {
       id: result.getLong(result.getColumnIndex('id')),

@@ -45,6 +45,14 @@ export interface ArticleTag {
   tagId: number;
 }
 
+// OPML 导入结果
+export interface ImportResult {
+  success: number;   // 成功导入数量
+  failed: number;    // 失败数量
+  skipped: number;   // 跳过数量（网络故障但已存在的 Feed）
+  errors: string[];  // 错误详情列表
+}
+
 // 设置数据结构
 export interface AppSettings {
   refreshInterval: number;

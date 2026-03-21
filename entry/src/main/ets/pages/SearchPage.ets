@@ -146,7 +146,14 @@ export struct SearchPage {
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
                     const idx = this.results.findIndex(a => a.id === article.id);
                     if (idx >= 0) {
-                      this.results[idx] = { ...article, isStarred: newStar };
+                      const updated: Article = {
+                        id: article.id, feedId: article.feedId, feedTitle: article.feedTitle,
+                        guid: article.guid, title: article.title, summary: article.summary,
+                        content: article.content, url: article.url, author: article.author,
+                        publishedAt: article.publishedAt, isRead: article.isRead,
+                        isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt
+                      };
+                      this.results[idx] = updated;
                       this.results = [...this.results];
                     }
                   }

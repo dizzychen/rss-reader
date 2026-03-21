@@ -11,7 +11,7 @@ export struct HomePage {
   @State isLoading: boolean = false;
   @State isLoadingMore: boolean = false;
   @State hasMore: boolean = true;
-  @State onlyUnread: boolean = false;
+  @State onlyUnread: boolean = true;
   @State isRefreshing: boolean = false;
   @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
   private pageOffset: number = 0;

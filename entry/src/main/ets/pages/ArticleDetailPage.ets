@@ -181,38 +181,33 @@ struct ArticleDetailPage {
               .lineHeight((Constants.FONT_SIZES[this.fontSizeIndex] + 4) * 1.5)
               .width('100%')
 
-            // 来源信息区块
-            Column({ space: 4 }) {
-              // 来源订阅名
+            // 来源信息区块：来源 + 时间在同一行
+            Row({ space: 8 }) {
               if (this.feedTitle) {
-                Row({ space: 4 }) {
-                  SymbolGlyph($r('sys.symbol.discover'))
-                    .fontSize(11)
-                    .fontColor([$r('sys.color.ohos_id_color_activated')])
-                  Text(this.feedTitle)
-                    .fontSize(12)
-                    .fontColor($r('sys.color.ohos_id_color_activated'))
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                }
-              }
-              // 作者 + 时间
-              Row({ space: 12 }) {
-                if (this.article.author) {
-                  Text(this.article.author)
-                    .fontSize(12)
-                    .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-                    .maxLines(1)
-                }
-                Text(RssService.getInstance().formatDate(this.article.publishedAt))
+                SymbolGlyph($r('sys.symbol.discover'))
+                  .fontSize(11)
+                  .fontColor([$r('sys.color.ohos_id_color_activated')])
+                Text(this.feedTitle)
                   .fontSize(12)
-                  .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+                  .fontColor($r('sys.color.ohos_id_color_activated'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .constraintSize({ maxWidth: '50%' })
               }
-              .width('100%')
+              if (this.article.author) {
+                Text(this.article.author)
+                  .fontSize(12)
+                  .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .constraintSize({ maxWidth: '30%' })
+              }
+              Blank()
+              Text(RssService.getInstance().formatDate(this.article.publishedAt))
+                .fontSize(12)
+                .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
             }
             .width('100%')
-            .alignItems(HorizontalAlign.Start)
-            .padding({ top: 10, bottom: 10 })
             .margin({ top: 8 })
             .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
             .borderRadius(8)
