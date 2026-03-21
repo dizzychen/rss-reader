@@ -203,7 +203,9 @@ struct ArticleDetailPage {
           }
           .width('100%')
           .padding({ left: 16, right: 16, top: 16, bottom: 32 })
+          .alignItems(HorizontalAlign.Start)
         }
+        .align(Alignment.TopStart)
         .layoutWeight(1)
         .scrollBar(BarState.Auto)
       }
