@@ -9,6 +9,8 @@ import { ArticleItemComponent } from '../components/ArticleItemComponent';
 export struct HomePage {
   @State articles: Article[] = [];
   @State isLoading: boolean = false;
+  @State isLoadingMore: boolean = false;
+  @State hasMore: boolean = true;
   @State onlyUnread: boolean = false;
   @State isRefreshing: boolean = false;
   @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
@@ -27,15 +29,21 @@ export struct HomePage {
   async loadArticles(reset: boolean = true) {
     if (reset) {
       this.pageOffset = 0;
+      this.hasMore = true;
       this.isLoading = true;
+    } else {
+      if (!this.hasMore || this.isLoadingMore) return;
+      this.isLoadingMore = true;
     }
     try {
       const db = DatabaseHelper.getInstance();
-      // 构建 feedId → feedTitle 的映射
-      const feeds: Feed[] = await db.getAllFeeds();
-      this.feedMap.clear();
-      for (const f of feeds) {
-        this.feedMap.set(f.id!, f.title);
+      // reset 时重建 feedMap；追加时仅补充新增 feed
+      if (reset) {
+        const feeds: Feed[] = await db.getAllFeeds();
+        this.feedMap.clear();
+        for (const f of feeds) {
+          this.feedMap.set(f.id!, f.title);
+        }
       }
       const items = await db.getAllArticles(this.onlyUnread, this.pageSize, this.pageOffset);
       // 给每篇文章附加来源名称
@@ -48,10 +56,13 @@ export struct HomePage {
         this.articles = [...this.articles, ...items];
       }
       this.pageOffset += items.length;
+      // 返回数量不足一页，说明已到末尾
+      this.hasMore = items.length >= this.pageSize;
     } catch (e) {
       console.error('HomePage', `加载失败: ${e}`);
     } finally {
       this.isLoading = false;
+      this.isLoadingMore = false;
     }
   }
 
@@ -139,7 +150,14 @@ export struct HomePage {
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
                     const idx = this.articles.findIndex(a => a.id === article.id);
                     if (idx >= 0) {
-                      this.articles[idx] = { ...article, isStarred: newStar };
+                      const updated: Article = {
+                        id: article.id, feedId: article.feedId, feedTitle: article.feedTitle,
+                        guid: article.guid, title: article.title, summary: article.summary,
+                        content: article.content, url: article.url, author: article.author,
+                        publishedAt: article.publishedAt, isRead: article.isRead,
+                        isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt
+                      };
+                      this.articles[idx] = updated;
                       this.articles = [...this.articles];
                     }
                   }
@@ -150,11 +168,19 @@ export struct HomePage {
             // 加载更多
             ListItem() {
               Row() {
-                Button('加载更多')
-                  .fontSize(14)
-                  .fontColor($r('sys.color.ohos_id_color_activated'))
-                  .backgroundColor(Color.Transparent)
-                  .onClick(() => this.loadArticles(false))
+                if (this.isLoadingMore) {
+                  LoadingProgress().width(24).height(24)
+                } else if (this.hasMore) {
+                  Button('加载更多')
+                    .fontSize(14)
+                    .fontColor($r('sys.color.ohos_id_color_activated'))
+                    .backgroundColor(Color.Transparent)
+                    .onClick(() => this.loadArticles(false))
+                } else {
+                  Text('已加载全部文章')
+                    .fontSize(13)
+                    .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+                }
               }
               .width('100%')
               .justifyContent(FlexAlign.Center)
