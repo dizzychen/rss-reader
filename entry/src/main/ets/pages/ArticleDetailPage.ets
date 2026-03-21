@@ -15,6 +15,7 @@ struct ArticleDetailPage {
   @State fontSizeIndex: number = 1;
   @State isStarred: boolean = false;
   @State bodyText: string = '';
+  @State feedTitle: string = '';
   private articleId: number = -1;
 
   aboutToAppear() {
@@ -43,6 +44,9 @@ struct ArticleDetailPage {
       // 将 HTML 内容转换为适合 ArkTS Text 渲染的纯文本
       const raw = this.article.content || this.article.summary || '';
       this.bodyText = this.htmlToReadableText(raw);
+      // 加载来源名称
+      const feed = await db.getFeedById(this.article.feedId);
+      this.feedTitle = feed?.title ?? '';
     }
   }
 
@@ -168,41 +172,67 @@ struct ArticleDetailPage {
       } else {
         Scroll() {
           Column({ space: 0 }) {
+
             // 标题
             Text(this.article.title)
               .fontSize(Constants.FONT_SIZES[this.fontSizeIndex] + 4)
               .fontWeight(FontWeight.Bold)
               .fontColor($r('sys.color.ohos_id_color_text_primary'))
-              .lineHeight((Constants.FONT_SIZES[this.fontSizeIndex] + 4) * 1.4)
+              .lineHeight((Constants.FONT_SIZES[this.fontSizeIndex] + 4) * 1.5)
               .width('100%')
 
-            // 元信息行
-            Row({ space: 8 }) {
-              if (this.article.author) {
-                Text(this.article.author)
-                  .fontSize(12)
-                  .fontColor($r('sys.color.ohos_id_color_activated'))
-                  .maxLines(1)
+            // 来源信息区块
+            Column({ space: 4 }) {
+              // 来源订阅名
+              if (this.feedTitle) {
+                Row({ space: 4 }) {
+                  SymbolGlyph($r('sys.symbol.discover'))
+                    .fontSize(11)
+                    .fontColor([$r('sys.color.ohos_id_color_activated')])
+                  Text(this.feedTitle)
+                    .fontSize(12)
+                    .fontColor($r('sys.color.ohos_id_color_activated'))
+                    .maxLines(1)
+                    .textOverflow({ overflow: TextOverflow.Ellipsis })
+                }
               }
-              Text(RssService.getInstance().formatDate(this.article.publishedAt))
-                .fontSize(12)
-                .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+              // 作者 + 时间
+              Row({ space: 12 }) {
+                if (this.article.author) {
+                  Text(this.article.author)
+                    .fontSize(12)
+                    .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                    .maxLines(1)
+                }
+                Text(RssService.getInstance().formatDate(this.article.publishedAt))
+                  .fontSize(12)
+                  .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+              }
+              .width('100%')
             }
             .width('100%')
-            .margin({ top: 8, bottom: 16 })
+            .alignItems(HorizontalAlign.Start)
+            .padding({ top: 10, bottom: 10 })
+            .margin({ top: 8 })
+            .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+            .borderRadius(8)
+            .padding({ left: 12, right: 12, top: 10, bottom: 10 })
 
-            Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ bottom: 16 })
+            Divider()
+              .color($r('sys.color.ohos_id_color_list_separator'))
+              .margin({ top: 16, bottom: 16 })
 
             // 正文
             Text(this.bodyText || this.article.summary || '（暂无内容）')
               .fontSize(Constants.FONT_SIZES[this.fontSizeIndex])
               .fontColor($r('sys.color.ohos_id_color_text_primary'))
-              .lineHeight(Constants.FONT_SIZES[this.fontSizeIndex] * 1.8)
+              .lineHeight(Constants.FONT_SIZES[this.fontSizeIndex] * 1.9)
               .width('100%')
               .wordBreak(WordBreak.BREAK_WORD)
+
           }
           .width('100%')
-          .padding({ left: 16, right: 16, top: 16, bottom: 32 })
+          .padding({ left: 16, right: 16, top: 20, bottom: 40 })
           .alignItems(HorizontalAlign.Start)
         }
         .align(Alignment.TopStart)
