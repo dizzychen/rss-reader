@@ -2,7 +2,7 @@
 import { HomePage } from './HomePage';
 import { FeedsPage } from './FeedsPage';
 import { StarredPage } from './StarredPage';
-import { SearchPage } from './SearchPage';
+import { MePage } from './MePage';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { SettingsService } from '../service/SettingsService';
 
@@ -15,7 +15,7 @@ struct Index {
   @State homeRefreshTick: number = 0;
   @State feedsRefreshTick: number = 0;
   @State starredRefreshTick: number = 0;
-  @State searchRefreshTick: number = 0;
+  @State meRefreshTick: number = 0;
 
   aboutToAppear() {
     // 确保数据库和设置服务已初始化完毕再渲染页面
@@ -58,7 +58,7 @@ struct Index {
         this.starredRefreshTick++;
         break;
       case 3:
-        this.searchRefreshTick++;
+        this.meRefreshTick++;
         break;
       default:
         break;
@@ -101,9 +101,9 @@ struct Index {
           .tabBar(this.tabBarBuilder(2, 'star', 'star_fill', '收藏'))
 
           TabContent() {
-            SearchPage({ refreshTick: this.searchRefreshTick })
+            MePage({ refreshTick: this.meRefreshTick })
           }
-          .tabBar(this.tabBarBuilder(3, 'magnifyingglass', 'magnifyingglass', '搜索'))
+          .tabBar(this.tabBarBuilder(3, 'person', 'person_fill', '我'))
         }
         .onChange((index) => {
           this.currentIndex = index;

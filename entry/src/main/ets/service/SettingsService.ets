@@ -62,4 +62,78 @@ export class SettingsService {
     await this.prefs.put(key, value);
     await this.prefs.flush();
   }
+
+  // ===== AI 相关设置 =====
+
+  async getAIApiKey(): Promise<string> {
+    if (!this.prefs) return '';
+    const v = await this.prefs.get(Constants.PREF_AI_API_KEY, '');
+    return typeof v === 'string' ? v : '';
+  }
+
+  async setAIApiKey(key: string): Promise<void> {
+    await this.setSetting(Constants.PREF_AI_API_KEY, key);
+  }
+
+  async getBriefingEnabled(): Promise<boolean> {
+    if (!this.prefs) return true;
+    const v = await this.prefs.get(Constants.PREF_DAILY_BRIEFING_ENABLED, true);
+    return typeof v === 'boolean' ? v : true;
+  }
+
+  async setBriefingEnabled(val: boolean): Promise<void> {
+    await this.setSetting(Constants.PREF_DAILY_BRIEFING_ENABLED, val);
+  }
+
+  async getAISortEnabled(): Promise<boolean> {
+    if (!this.prefs) return false;
+    const v = await this.prefs.get(Constants.PREF_AI_SORT_ENABLED, false);
+    return typeof v === 'boolean' ? v : false;
+  }
+
+  async setAISortEnabled(val: boolean): Promise<void> {
+    await this.setSetting(Constants.PREF_AI_SORT_ENABLED, val);
+  }
+
+  async getLastMaintenanceDate(): Promise<string> {
+    if (!this.prefs) return '';
+    const v = await this.prefs.get(Constants.PREF_LAST_MAINTENANCE_DATE, '');
+    return typeof v === 'string' ? v : '';
+  }
+
+  async setLastMaintenanceDate(date: string): Promise<void> {
+    await this.setSetting(Constants.PREF_LAST_MAINTENANCE_DATE, date);
+  }
+
+  // ===== AI 提供商配置 =====
+
+  async getAIProvider(): Promise<string> {
+    if (!this.prefs) return 'qwen';
+    const v = await this.prefs.get(Constants.PREF_AI_PROVIDER, 'qwen');
+    return typeof v === 'string' ? v : 'qwen';
+  }
+
+  async setAIProvider(provider: string): Promise<void> {
+    await this.setSetting(Constants.PREF_AI_PROVIDER, provider);
+  }
+
+  async getAIBaseUrl(): Promise<string> {
+    if (!this.prefs) return '';
+    const v = await this.prefs.get(Constants.PREF_AI_BASE_URL, '');
+    return typeof v === 'string' ? v : '';
+  }
+
+  async setAIBaseUrl(url: string): Promise<void> {
+    await this.setSetting(Constants.PREF_AI_BASE_URL, url);
+  }
+
+  async getAIModelName(): Promise<string> {
+    if (!this.prefs) return '';
+    const v = await this.prefs.get(Constants.PREF_AI_MODEL_NAME, '');
+    return typeof v === 'string' ? v : '';
+  }
+
+  async setAIModelName(name: string): Promise<void> {
+    await this.setSetting(Constants.PREF_AI_MODEL_NAME, name);
+  }
 }

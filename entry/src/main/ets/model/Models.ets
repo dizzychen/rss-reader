@@ -62,3 +62,51 @@ export interface AppSettings {
   openOriginalInApp: boolean;
   cacheCountPerFeed: number;
 }
+
+// ===== 记忆系统数据模型 =====
+
+/** 用户行为动作枚举 */
+export type BehaviorAction = 'READ' | 'READ_END' | 'STAR' | 'UNSTAR' | 'SKIP' | 'SEARCH';
+
+/** 单条用户行为记录 */
+export interface UserBehavior {
+  timestamp: number;        // 行为发生时间（ms）
+  action: BehaviorAction;   // 行为类型
+  articleId?: number;       // 相关文章 ID
+  articleTitle?: string;    // 文章标题
+  feedTitle?: string;       // 来源订阅名
+  tags?: string[];          // 文章标签
+  duration?: number;        // 阅读时长（秒，READ_END 时使用）
+  keyword?: string;         // 搜索关键词（SEARCH 时使用）
+}
+
+/** 某天的聚合统计数据 */
+export interface DailyStats {
+  date: string;             // YYYY-MM-DD
+  readCount: number;        // 阅读文章数
+  starCount: number;        // 收藏文章数
+  searchCount: number;      // 搜索次数
+  avgReadDuration: number;  // 平均阅读时长（秒）
+  topFeeds: string[];       // 阅读最多的订阅源（最多3个）
+  starFeeds: string[];      // 收藏文章的订阅源（用于计算兴趣权重）
+  topKeywords: string[];    // 搜索关键词（最多5个）
+}
+
+/** 兴趣权重条目 */
+export interface InterestWeight {
+  key: string;              // 兴趣标签/来源名
+  weight: number;           // 权重 [0, 1]
+  updatedAt: string;        // 最后更新日期 YYYY-MM-DD
+}
+
+/** 用户画像 */
+export interface UserProfile {
+  generatedAt: string;          // 生成时间 YYYY-MM-DD
+  totalReadDays: number;        // 累计阅读天数
+  totalArticles: number;        // 累计阅读文章数
+  avgDailyRead: number;         // 日均阅读文章数
+  feedInterests: InterestWeight[];   // 订阅源兴趣权重
+  topicInterests: InterestWeight[];  // 话题/标签兴趣权重
+  preferredReadTime: string;    // 偏好阅读时段（如 "早晨 07-09"）
+  avgReadDuration: number;      // 平均阅读时长（秒）
+}

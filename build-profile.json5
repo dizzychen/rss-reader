@@ -7,11 +7,11 @@
         "material": {
           "certpath": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.cer",
           "keyAlias": "debugKey",
-          "keyPassword": "0000001B4C9E6169B3D8F5E5885CD2617619CBB03FF3BEFB2568321C0F35C5CA54D47D556004B8064EB314",
+          "keyPassword": "0000001B101F42D4BB6C92D877563B46384900D5C35A5F6F436DAD4D3DF2C47DF8061CA8C22A65F2D99E5D",
           "profile": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.p12",
-          "storePassword": "0000001B95332B6DE4185C17D47B2A5F6A4227EAD8DC48CD8989D1D7639E0CB32609FC59211BF6946C2371"
+          "storePassword": "0000001B03F03AE8E7B106129D51364C1C24A254BE49BE3996E900703A44E2E3453F17021EC5B77AD8584A"
         }
       }
     ],

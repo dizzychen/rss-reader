@@ -3,6 +3,7 @@ import { router } from '@kit.ArkUI';
 import { Article, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
+import { MemoryService } from '../service/MemoryService';
 
 @Component
 export struct SearchPage {
@@ -10,7 +11,6 @@ export struct SearchPage {
   @State results: Article[] = [];
   @State isSearching: boolean = false;
   @State feeds: Feed[] = [];
-  @State selectedFeedId: number = -1;
   @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
   private debounceTimer: number = -1;
 
@@ -42,13 +42,19 @@ export struct SearchPage {
     this.debounceTimer = setTimeout(async () => {
       this.isSearching = true;
       try {
-        const res = await DatabaseHelper.getInstance().searchArticles(kw.trim(), this.selectedFeedId);
+        const res = await DatabaseHelper.getInstance().searchArticles(kw.trim(), -1);
         // 附加 feedTitle
         for (const a of res) {
           const feed = this.feeds.find(f => f.id === a.feedId);
           a.feedTitle = feed?.title ?? '';
         }
         this.results = res;
+        // 记录 SEARCH 行为
+        MemoryService.getInstance().recordBehavior({
+          timestamp: Date.now(),
+          action: 'SEARCH',
+          keyword: kw.trim()
+        });
       } finally {
         this.isSearching = false;
       }
@@ -70,41 +76,6 @@ export struct SearchPage {
       .width('100%')
       .padding({ left: 16, right: 16, top: 8, bottom: 8 })
       .backgroundColor($r('sys.color.ohos_id_color_background'))
-
-      // 订阅源过滤
-      if (this.feeds.length > 0) {
-        Scroll() {
-          Row({ space: 8 }) {
-            Button('全部')
-              .fontSize(13)
-              .fontColor(this.selectedFeedId === -1 ? Color.White : $r('sys.color.ohos_id_color_text_secondary'))
-              .backgroundColor(this.selectedFeedId === -1 ? $r('sys.color.ohos_id_color_activated') : $r('sys.color.ohos_id_color_background'))
-              .height(32)
-              .borderRadius(16)
-              .onClick(() => {
-                this.selectedFeedId = -1;
-                this.doSearch(this.keyword);
-              })
-            ForEach(this.feeds, (feed: Feed) => {
-              Button(feed.title)
-                .fontSize(13)
-                .fontColor(this.selectedFeedId === feed.id! ? Color.White : $r('sys.color.ohos_id_color_text_secondary'))
-                .backgroundColor(this.selectedFeedId === feed.id! ? $r('sys.color.ohos_id_color_activated') : $r('sys.color.ohos_id_color_background'))
-                .height(32)
-                .borderRadius(16)
-                .onClick(() => {
-                  this.selectedFeedId = feed.id!;
-                  this.doSearch(this.keyword);
-                })
-            }, (f: Feed) => `${f.id}`)
-          }
-          .padding({ left: 16, right: 16 })
-        }
-        .scrollable(ScrollDirection.Horizontal)
-        .width('100%')
-        .height(48)
-        .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
-      }
 
       Divider().color($r('sys.color.ohos_id_color_list_separator'))
 

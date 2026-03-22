@@ -43,7 +43,13 @@
             "name": "ohos.extension.backup",
             "resource": "$profile:backup_config"
           }
-        ],
+        ]
+      },
+      {
+        "name": "RssRefreshExtension",
+        "srcEntry": "./ets/extension/RssRefreshExtension.ets",
+        "type": "workScheduler",
+        "exported": false
       }
     ],
     "requestPermissions": [

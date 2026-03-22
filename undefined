@@ -1,0 +1,24 @@
+[2026-03-22T09:59:47.011] [ERROR] [28080] - Dir json parse error: .
+
+[2026-03-22T10:00:06.197] [INFO] [29858] - targets: undefined
+
+[2026-03-22T10:00:06.198] [INFO] [29858] - The configuration file /Users/dizzychen/DevEcoStudioProjects/RssReader/code-linter.json5 is in use.
+
+[2026-03-22T10:00:06.203] [ERROR] [29858] - Some error occurred during linting. This may cause incomplete report results.
+
+[2026-03-22T10:01:03.798] [INFO] [35411] - targets: undefined
+
+[2026-03-22T10:01:03.799] [INFO] [35411] - The configuration file /Users/dizzychen/DevEcoStudioProjects/RssReader/code-linter.json5 is in use.
+
+[2026-03-22T10:01:03.804] [ERROR] [35411] - Some error occurred during linting. This may cause incomplete report results.
+
+[2026-03-22T10:01:16.864] [INFO] [37098] - targets: undefined
+
+[2026-03-22T10:01:16.865] [INFO] [37098] - The configuration file /Users/dizzychen/DevEcoStudioProjects/RssReader/code-linter.json5 is in use.
+
+[2026-03-22T10:01:16.869] [ERROR] [37098] - Some error occurred during linting. This may cause incomplete report results.
+
+[2026-03-22T10:01:31.187] [ERROR] [38801] - Dir json parse error: /Users/dizzychen/DevEcoStudioProjects/RssReader/entry/src/main/ets
+
+[2026-03-22T10:01:58.042] [ERROR] [42203] - Some fatal error occurred. SyntaxError: Unexpected token / in JSON at position 0
+

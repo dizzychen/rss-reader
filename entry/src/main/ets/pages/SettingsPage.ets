@@ -1,10 +1,13 @@
 // 设置页
 import { router } from '@kit.ArkUI';
+import { util } from '@kit.ArkTS';
 import { SettingsService } from '../service/SettingsService';
 import { DatabaseHelper } from '../database/DatabaseHelper';
+import { MemoryService } from '../service/MemoryService';
 import { Constants } from '../constants/Constants';
 import { OPMLService } from '../service/OPMLService';
 import { OPMLFileHelper } from '../service/OPMLFileHelper';
+import { WorkSchedulerManager } from '../service/WorkSchedulerManager';
 import { common } from '@kit.AbilityKit';
 
 interface SelectOption {
@@ -24,9 +27,20 @@ struct SettingsPage {
   @State loaded: boolean = false;
   @State isExporting: boolean = false;
   @State isImporting: boolean = false;
+  @State bgTaskStatus: string = '检查中...';
 
   aboutToAppear() {
     this.loadSettings();
+    this.checkBgTaskStatus();
+  }
+
+  async checkBgTaskStatus(): Promise<void> {
+    try {
+      const isRegistered = await WorkSchedulerManager.getInstance().isTaskRegistered();
+      this.bgTaskStatus = isRegistered ? '运行中 ✓' : '未运行';
+    } catch (e) {
+      this.bgTaskStatus = '状态未知';
+    }
   }
 
   async loadSettings() {
@@ -90,8 +104,21 @@ struct SettingsPage {
                   .value(Constants.REFRESH_INTERVAL_LABELS[this.refreshIntervalIndex])
                   .onSelect((index: number) => {
                     this.refreshIntervalIndex = index;
+                    const interval = Constants.REFRESH_INTERVALS[index];
                     SettingsService.getInstance()
-                      .setSetting(Constants.PREF_REFRESH_INTERVAL, Constants.REFRESH_INTERVALS[index]);
+                      .setSetting(Constants.PREF_REFRESH_INTERVAL, interval);
+                    // 若后台刷新已开启，同步更新任务周期
+                    if (this.bgRefreshEnabled && interval > 0) {
+                      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+                      WorkSchedulerManager.getInstance().registerFeedRefreshTask(ctx.abilityInfo.bundleName, interval).then(() => {
+                        this.checkBgTaskStatus();
+                      });
+                    } else if (interval === 0) {
+                      // 间隔设为「关闭」时停止后台任务
+                      WorkSchedulerManager.getInstance().unregisterFeedRefreshTask().then(() => {
+                        this.checkBgTaskStatus();
+                      });
+                    }
                   })
                   .font({ size: 14 })
               }
@@ -100,16 +127,36 @@ struct SettingsPage {
               Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
 
               Row() {
-                Text('后台自动刷新')
-                  .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary')).layoutWeight(1)
+                Column({ space: 2 }) {
+                  Text('后台自动刷新')
+                    .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary'))
+                  Text(this.bgTaskStatus)
+                    .fontSize(12)
+                    .fontColor(this.bgTaskStatus.includes('运行中')
+                      ? $r('sys.color.ohos_id_color_activated')
+                      : $r('sys.color.ohos_id_color_text_secondary'))
+                }
+                .layoutWeight(1).alignItems(HorizontalAlign.Start)
                 Toggle({ type: ToggleType.Switch, isOn: this.bgRefreshEnabled })
                   .onChange((val: boolean) => {
                     if (!this.loaded) return;
                     this.bgRefreshEnabled = val;
                     SettingsService.getInstance().setSetting(Constants.PREF_BG_REFRESH, val);
+                    // 启动或停止后台任务
+                    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+                    const interval = Constants.REFRESH_INTERVALS[this.refreshIntervalIndex];
+                    if (val && interval > 0) {
+                      WorkSchedulerManager.getInstance().registerFeedRefreshTask(ctx.abilityInfo.bundleName, interval).then(() => {
+                        this.checkBgTaskStatus();
+                      });
+                    } else {
+                      WorkSchedulerManager.getInstance().unregisterFeedRefreshTask().then(() => {
+                        this.checkBgTaskStatus();
+                      });
+                    }
                   })
               }
-              .width('100%').height(52).padding({ left: 16, right: 16 })
+              .width('100%').height(60).padding({ left: 16, right: 16 })
 
               Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
 
@@ -300,6 +347,104 @@ struct SettingsPage {
             }
             .backgroundColor($r('sys.color.ohos_id_color_background')).borderRadius(12)
 
+            // ===== 记忆与 AI =====
+            this.sectionHeader('记忆与 AI')
+            Column() {
+              Row() {
+                Text('我的阅读档案')
+                  .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary')).layoutWeight(1)
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(16).fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+              }
+              .width('100%').height(52).padding({ left: 16, right: 16 })
+              .onClick(() => this.getUIContext().getRouter().pushUrl({ url: 'pages/SoulEditPage' }))
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
+              Row() {
+                Text('阅读画像')
+                  .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary')).layoutWeight(1)
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(16).fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+              }
+              .width('100%').height(52).padding({ left: 16, right: 16 })
+              .onClick(() => this.getUIContext().getRouter().pushUrl({ url: 'pages/ProfileViewPage' }))
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
+              Row() {
+                Text('阅读统计')
+                  .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary')).layoutWeight(1)
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(16).fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+              }
+              .width('100%').height(52).padding({ left: 16, right: 16 })
+              .onClick(() => this.getUIContext().getRouter().pushUrl({ url: 'pages/ReadingStatsPage' }))
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
+              Row() {
+                Text('AI 设置')
+                  .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary')).layoutWeight(1)
+                SymbolGlyph($r('sys.symbol.chevron_right'))
+                  .fontSize(16).fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+              }
+              .width('100%').height(52).padding({ left: 16, right: 16 })
+              .onClick(() => this.getUIContext().getRouter().pushUrl({ url: 'pages/AISettingsPage' }))
+            }
+            .backgroundColor($r('sys.color.ohos_id_color_background')).borderRadius(12)
+
+            // ===== 数据管理 =====
+            this.sectionHeader('数据管理')
+            Column() {
+              Row() {
+                Column({ space: 2 }) {
+                  Text('导出记忆数据')
+                    .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary'))
+                  Text('将灵魂档案、画像和近7天日志导出为文本')
+                    .fontSize(12).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                }
+                .layoutWeight(1).alignItems(HorizontalAlign.Start)
+                SymbolGlyph($r('sys.symbol.arrow_up'))
+                  .fontSize(18).fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+              }
+              .width('100%').height(60).padding({ left: 16, right: 16 })
+              .onClick(() => this.exportMemory())
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
+              Row() {
+                Column({ space: 2 }) {
+                  Text('重置为默认模板')
+                    .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary'))
+                  Text('将灵魂档案恢复为初始模板内容')
+                    .fontSize(12).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                }
+                .layoutWeight(1).alignItems(HorizontalAlign.Start)
+                SymbolGlyph($r('sys.symbol.arrow_counterclockwise'))
+                  .fontSize(18).fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+              }
+              .width('100%').height(60).padding({ left: 16, right: 16 })
+              .onClick(() => this.confirmResetToTemplate())
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
+              Row() {
+                Column({ space: 2 }) {
+                  Text('清除记忆数据')
+                    .fontSize(15).fontColor(Color.Red)
+                  Text('删除所有行为日志、画像和灵魂档案')
+                    .fontSize(12).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                }
+                .layoutWeight(1).alignItems(HorizontalAlign.Start)
+                SymbolGlyph($r('sys.symbol.trash'))
+                  .fontSize(18).fontColor([Color.Red])
+              }
+              .width('100%').height(60).padding({ left: 16, right: 16 })
+              .onClick(() => this.confirmClearMemory())
+            }
+            .backgroundColor($r('sys.color.ohos_id_color_background')).borderRadius(12)
+
           }
           .padding(16)
         }
@@ -397,6 +542,77 @@ struct SettingsPage {
     } finally {
       this.isImporting = false;
     }
+  }
+
+  private async exportMemory() {
+    try {
+      const content = await MemoryService.getInstance().exportMemoryData();
+      if (!content.trim()) {
+        this.getUIContext().getPromptAction().showToast({ message: '暂无记忆数据可导出' });
+        return;
+      }
+
+      // 使用 OPMLFileHelper 保存文件（复用文件保存逻辑）
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const filename = `memory_export_${new Date().toISOString().slice(0, 10)}.md`;
+      await OPMLFileHelper.saveOPMLFile(ctx, content, filename);
+      this.getUIContext().getPromptAction().showToast({ message: '记忆数据导出成功' });
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === '用户取消保存') return;
+      this.getUIContext().getPromptAction().showToast({ message: `导出失败：${msg}` });
+    }
+  }
+
+  private confirmClearMemory() {
+    this.getUIContext().showAlertDialog({
+      title: '清除记忆数据',
+      message: '将删除所有行为日志、阅读画像和灵魂档案。此操作不可撤销。',
+      primaryButton: {
+        value: '确认清除',
+        fontColor: Color.Red,
+        action: async () => {
+          try {
+            await MemoryService.getInstance().clearAllMemory();
+            this.getUIContext().getPromptAction().showToast({ message: '记忆数据已清除' });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            this.getUIContext().getPromptAction().showToast({ message: `清除失败：${msg}` });
+          }
+        }
+      },
+      secondaryButton: { value: '取消', action: () => {} }
+    });
+  }
+
+  private confirmResetToTemplate() {
+    this.getUIContext().showAlertDialog({
+      title: '重置为默认模板',
+      message: '将覆盖当前灵魂档案和画像为初始模板内容。已有的个人设置将丢失。',
+      primaryButton: {
+        value: '确认重置',
+        fontColor: $r('sys.color.ohos_id_color_warning'),
+        action: async () => {
+          try {
+            // 从 rawfile 读取模板
+            const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+            const soulRaw = await ctx.resourceManager.getRawFileContent('memory/SOUL.md');
+            const profileRaw = await ctx.resourceManager.getRawFileContent('memory/PROFILE.md');
+            const decoder = new util.TextDecoder('utf-8');
+            const soulTemplate = decoder.decodeToString(soulRaw);
+            const profileTemplate = decoder.decodeToString(profileRaw);
+
+            // 执行重置
+            await MemoryService.getInstance().resetToTemplate(soulTemplate, profileTemplate);
+            this.getUIContext().getPromptAction().showToast({ message: '已重置为默认模板' });
+          } catch (e) {
+            const msg = e instanceof Error ? e.message : String(e);
+            this.getUIContext().getPromptAction().showToast({ message: `重置失败：${msg}` });
+          }
+        }
+      },
+      secondaryButton: { value: '取消', action: () => {} }
+    });
   }
 }
 

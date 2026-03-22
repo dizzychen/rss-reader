@@ -5,6 +5,11 @@
     "pages/ArticleDetailPage",
     "pages/SettingsPage",
     "pages/AddFeedPage",
-    "pages/TagsManagePage"
+    "pages/TagsManagePage",
+    "pages/SoulEditPage",
+    "pages/ProfileViewPage",
+    "pages/ReadingStatsPage",
+    "pages/AISettingsPage",
+    "pages/DailyBriefingPage"
   ]
 }
