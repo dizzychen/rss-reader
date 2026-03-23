@@ -1,7 +1,8 @@
-// 画像计算服务 - 基于 30 天行为数据生成用户画像
+// 画像计算服务 - 基于 30 天行为数据生成用户画像 + AI 综合分析
 import { DailyStats, InterestWeight, UserProfile } from '../model/Models';
 import { MemoryFileHelper } from './MemoryFileHelper';
 import { MemoryService } from './MemoryService';
+import { AIService } from './AIService';
 import { InterestCalculator } from '../utils/InterestCalculator';
 import { DateUtil } from '../utils/DateUtil';
 import { Constants } from '../constants/Constants';
@@ -13,6 +14,23 @@ interface AggregatedStats {
   avgDailyRead: number;
   feedSignals: Map<string, number>;
   avgReadDuration: number;
+  topKeywords: string[];
+  feedAvgDuration: Map<string, number>;
+  feedDislikeCount: Map<string, number>;
+}
+
+/** 话题条目（名称 + 权重） */
+interface TopicItem {
+  name: string;
+  weight: number;
+}
+
+/** AI 画像综合返回结构 */
+interface AIProfileInsight {
+  topics: TopicItem[];
+  trend: string;
+  style: string;
+  dislikePatterns: string;
 }
 
 export class ProfileService {
@@ -35,10 +53,17 @@ export class ProfileService {
       readCount: 0,
       starCount: 0,
       searchCount: 0,
+      skipCount: 0,
       avgReadDuration: 0,
       topFeeds: [],
       starFeeds: [],
-      topKeywords: []
+      topKeywords: [],
+      readTitles: [],
+      likedTitles: [],
+      dislikedTitles: [],
+      feedDurations: new Map<string, number[]>(),
+      feedDislikeCounts: new Map<string, number>(),
+      readTimestamps: []
     };
 
     const feedCount = new Map<string, number>();
@@ -46,6 +71,7 @@ export class ProfileService {
     const keywords: string[] = [];
     let totalDuration = 0;
     let durationCount = 0;
+    let lastReadFeed = '';
 
     const lines = content.split('\n');
     for (const line of lines) {
@@ -56,25 +82,37 @@ export class ProfileService {
       if (parts.length < 4) {
         continue;
       }
+      const time = parts[0];
       const action = parts[1];
+      const title = parts[2];
       const feed = parts[3];
       const extra = parts.length >= 5 ? parts[4] : '-';
 
       if (action === 'READ') {
         stats.readCount++;
+        if (title && title !== '-') {
+          stats.readTitles.push(title);
+        }
         if (feed && feed !== '-') {
           feedCount.set(feed, (feedCount.get(feed) ?? 0) + 1);
+          lastReadFeed = feed;
+        }
+        if (time) {
+          stats.readTimestamps.push(time);
         }
       } else if (action === 'READ_END') {
-        // 解析时长
         const secs = this.parseDurationToSeconds(extra);
         if (secs > 0) {
           totalDuration += secs;
           durationCount++;
+          if (lastReadFeed) {
+            const durations = stats.feedDurations.get(lastReadFeed) ?? [];
+            durations.push(secs);
+            stats.feedDurations.set(lastReadFeed, durations);
+          }
         }
       } else if (action === 'STAR') {
         stats.starCount++;
-        // 收藏行为也计入订阅源统计（权重更高，在 calcSignal 中 ×3）
         if (feed && feed !== '-') {
           feedStar.set(feed, (feedStar.get(feed) ?? 0) + 1);
         }
@@ -83,6 +121,17 @@ export class ProfileService {
         if (extra && extra !== '-') {
           keywords.push(extra);
         }
+      } else if (action === 'SKIP') {
+        stats.skipCount++;
+      } else if (action === 'RATE') {
+        if (extra === '👍' && title && title !== '-') {
+          stats.likedTitles.push(title);
+        } else if (extra === '👎' && title && title !== '-') {
+          stats.dislikedTitles.push(title);
+          if (feed && feed !== '-') {
+            stats.feedDislikeCounts.set(feed, (stats.feedDislikeCounts.get(feed) ?? 0) + 1);
+          }
+        }
       }
     }
 
@@ -90,7 +139,6 @@ export class ProfileService {
       stats.avgReadDuration = Math.round(totalDuration / durationCount);
     }
 
-    // 取阅读最多的前3个订阅源
     const feedEntries: Array<[string, number]> = [];
     feedCount.forEach((cnt, name) => {
       feedEntries.push([name, cnt]);
@@ -98,7 +146,6 @@ export class ProfileService {
     feedEntries.sort((a, b) => b[1] - a[1]);
     stats.topFeeds = feedEntries.slice(0, 3).map(entry => entry[0]);
 
-    // 去重关键词，保留最多5个
     const seenKeywords = new Set<string>();
     const uniqueKeywords: string[] = [];
     for (const kw of keywords) {
@@ -109,7 +156,6 @@ export class ProfileService {
     }
     stats.topKeywords = uniqueKeywords.slice(0, 5);
 
-    // 收集收藏文章的订阅源
     const starFeedsArray: string[] = [];
     feedStar.forEach((_cnt, name) => {
       starFeedsArray.push(name);
@@ -121,24 +167,20 @@ export class ProfileService {
 
   /**
    * 解析时长字符串为秒数
-   * 支持格式：Xs, Xm Ys, Xh Ym
    */
   private parseDurationToSeconds(durationStr: string): number {
     if (!durationStr || durationStr === '-') {
       return 0;
     }
-    // 格式：X秒
     if (durationStr.endsWith('秒') && !durationStr.includes('分')) {
       return parseInt(durationStr.replace('秒', ''), 10) || 0;
     }
-    // 格式：X分YY秒
     if (durationStr.includes('分') && durationStr.includes('秒')) {
       const parts = durationStr.split('分');
       const minutes = parseInt(parts[0], 10) || 0;
       const secs = parseInt(parts[1].replace('秒', ''), 10) || 0;
       return minutes * 60 + secs;
     }
-    // 格式：X小时YY分
     if (durationStr.includes('小时')) {
       const parts = durationStr.split('小时');
       const hours = parseInt(parts[0], 10) || 0;
@@ -158,15 +200,17 @@ export class ProfileService {
 
     const feedCount = new Map<string, number>();
     const feedStar = new Map<string, number>();
+    const feedDurationAll = new Map<string, number[]>();
+    const feedDislike = new Map<string, number>();
     let totalDuration = 0;
     let durationCount = 0;
 
+    const keywordCount = new Map<string, number>();
+
     for (const d of dailyStatsList) {
-      // 统计阅读的订阅源
       for (const feed of d.topFeeds) {
         feedCount.set(feed, (feedCount.get(feed) ?? 0) + 1);
       }
-      // 统计收藏的订阅源
       for (const feed of d.starFeeds) {
         feedStar.set(feed, (feedStar.get(feed) ?? 0) + 1);
       }
@@ -174,38 +218,75 @@ export class ProfileService {
         totalDuration += d.avgReadDuration;
         durationCount++;
       }
+      // 聚合每个订阅源的阅读时长
+      d.feedDurations.forEach((durations, feed) => {
+        const existing = feedDurationAll.get(feed) ?? [];
+        for (const dur of durations) {
+          existing.push(dur);
+        }
+        feedDurationAll.set(feed, existing);
+      });
+      // 聚合搜索关键词
+      for (const kw of d.topKeywords) {
+        keywordCount.set(kw, (keywordCount.get(kw) ?? 0) + 1);
+      }
+      d.feedDislikeCounts.forEach((cnt, feed) => {
+        feedDislike.set(feed, (feedDislike.get(feed) ?? 0) + cnt);
+      });
     }
 
-    // 计算每个订阅源的信号强度（阅读 + 收藏）
+    // 计算每个源的平均阅读时长
+    const feedAvgDuration = new Map<string, number>();
+    feedDurationAll.forEach((durations, feed) => {
+      if (durations.length > 0) {
+        const sum = durations.reduce((a, b) => a + b, 0);
+        feedAvgDuration.set(feed, Math.round(sum / durations.length));
+      }
+    });
+
+    // 计算信号强度（含阅读时长加权和负面反馈惩罚）
     const feedSignals = new Map<string, number>();
-    // 首先处理有阅读记录的订阅源
     feedCount.forEach((count, feed) => {
       const starCount = feedStar.get(feed) ?? 0;
-      const signal = InterestCalculator.calcSignal(count, starCount, dailyStatsList.length);
+      const avgDur = feedAvgDuration.get(feed) ?? 0;
+      const dislike = feedDislike.get(feed) ?? 0;
+      const signal = InterestCalculator.calcSignal(count, starCount, dailyStatsList.length, avgDur, dislike);
       feedSignals.set(feed, signal);
     });
-    // 然后处理只有收藏但没有阅读记录的订阅源
     feedStar.forEach((starCount, feed) => {
       if (!feedCount.has(feed)) {
-        const signal = InterestCalculator.calcSignal(0, starCount, dailyStatsList.length);
+        const avgDur = feedAvgDuration.get(feed) ?? 0;
+        const dislike = feedDislike.get(feed) ?? 0;
+        const signal = InterestCalculator.calcSignal(0, starCount, dailyStatsList.length, avgDur, dislike);
         feedSignals.set(feed, signal);
       }
     });
 
     const avgDuration = durationCount > 0 ? Math.round(totalDuration / durationCount) : 0;
 
+    // 关键词按频次排序取 Top 10
+    const kwEntries: Array<[string, number]> = [];
+    keywordCount.forEach((cnt, kw) => {
+      kwEntries.push([kw, cnt]);
+    });
+    kwEntries.sort((a, b) => b[1] - a[1]);
+    const topKeywords = kwEntries.slice(0, 10).map(entry => entry[0]);
+
     const result: AggregatedStats = {
       totalReadDays: activeDays.length,
       totalArticles: totalArticles,
       avgDailyRead: avgDailyRead,
       feedSignals: feedSignals,
-      avgReadDuration: avgDuration
+      avgReadDuration: avgDuration,
+      topKeywords: topKeywords,
+      feedAvgDuration: feedAvgDuration,
+      feedDislikeCount: feedDislike
     };
     return result;
   }
 
   /**
-   * 重新生成用户画像并保存
+   * 重新生成用户画像并保存（统计 + AI 综合）
    */
   async regenerate(): Promise<void> {
     const memSvc = MemoryService.getInstance();
@@ -218,7 +299,6 @@ export class ProfileService {
       const dailyDir = `${filesDir}/${Constants.MEMORY_DAILY_DIR}`;
       const files = await MemoryFileHelper.listFiles(dailyDir);
 
-      // 读取最近 30 天的日志
       const today = DateUtil.today();
       const cutoff = DateUtil.daysAgo(Constants.MEMORY_KEEP_DAYS);
       const dailyStatsList: DailyStats[] = [];
@@ -255,16 +335,69 @@ export class ProfileService {
         today
       );
 
-      // 生成新的画像 Markdown
+      // 收集最近 7 天的已读/点赞/点踩标题（供 AI 分析）
+      const recentStats = dailyStatsList.slice(-7);
+      const allReadTitles: string[] = [];
+      const allLikedTitles: string[] = [];
+      const allDislikedTitles: string[] = [];
+      for (const d of recentStats) {
+        for (const t of d.readTitles) {
+          allReadTitles.push(t);
+        }
+        for (const t of d.likedTitles) {
+          allLikedTitles.push(t);
+        }
+        for (const t of d.dislikedTitles) {
+          allDislikedTitles.push(t);
+        }
+      }
+
+      // 计算推荐命中率（最近 7 天）
+      const recHitRate = this.calcRecommendationHitRate(recentStats);
+
+      // AI 综合分析（有 API Key 时）
+      let aiInsight: AIProfileInsight | null = null;
+      let topicWeights: InterestWeight[] = [];
+      if (AIService.getInstance().hasApiKey() && allReadTitles.length >= 3) {
+        try {
+          aiInsight = await this.runAIProfileSynthesis(
+            await memSvc.getSoul(),
+            existingProfileContent,
+            aggregated,
+            allReadTitles.slice(0, 100),
+            allLikedTitles,
+            allDislikedTitles,
+            recHitRate
+          );
+          if (aiInsight && aiInsight.topics.length > 0) {
+            topicWeights = aiInsight.topics.map((t): InterestWeight => {
+              const iw: InterestWeight = {
+                key: t.name,
+                weight: Math.round(Math.min(1, Math.max(0, t.weight)) * 1000) / 1000,
+                updatedAt: today
+              };
+              return iw;
+            });
+          }
+        } catch (e) {
+          const msg = e instanceof Error ? e.message : String(e);
+          console.warn('ProfileService', `AI synthesis skipped: ${msg}`);
+        }
+      }
+
       const profileContent = this.buildProfileMarkdown({
         generatedAt: today,
         totalReadDays: aggregated.totalReadDays,
         totalArticles: aggregated.totalArticles,
         avgDailyRead: aggregated.avgDailyRead,
         feedInterests: updatedFeedWeights,
-        topicInterests: [],
+        topicInterests: topicWeights,
         preferredReadTime: this.calcPreferredReadTime(dailyStatsList),
-        avgReadDuration: aggregated.avgReadDuration
+        avgReadDuration: aggregated.avgReadDuration,
+        aiInsight: aiInsight?.trend ?? '',
+        readingStyle: aiInsight?.style ?? '',
+        dislikePatterns: aiInsight?.dislikePatterns ?? '',
+        searchKeywords: aggregated.topKeywords
       });
 
       await memSvc.updateProfile(profileContent);
@@ -273,6 +406,122 @@ export class ProfileService {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('ProfileService', `regenerate failed: ${msg}`);
     }
+  }
+
+  /**
+   * AI 画像综合分析
+   */
+  private async runAIProfileSynthesis(
+    soul: string,
+    existingProfile: string,
+    aggregated: AggregatedStats,
+    readTitles: string[],
+    likedTitles: string[],
+    dislikedTitles: string[],
+    recHitRate: number
+  ): Promise<AIProfileInsight> {
+    const titleList = readTitles.map((t, i) => `${i + 1}. ${t}`).join('\n');
+    const likedList = likedTitles.length > 0
+      ? likedTitles.map(t => `- ${t}`).join('\n') : '（无）';
+    const dislikedList = dislikedTitles.length > 0
+      ? dislikedTitles.map(t => `- ${t}`).join('\n') : '（无）';
+
+    let feedRanking = '';
+    const feedEntries: Array<[string, number]> = [];
+    aggregated.feedSignals.forEach((signal, feed) => {
+      feedEntries.push([feed, signal]);
+    });
+    feedEntries.sort((a, b) => b[1] - a[1]);
+    feedRanking = feedEntries.slice(0, 10).map(e => `${e[0]}: ${e[1].toFixed(3)}`).join(', ');
+
+    const userPrompt = `请分析以下用户阅读数据，生成画像洞察。
+
+## 用户灵魂档案
+${soul.trim() || '（未设置）'}
+
+## 统计概览
+- 活跃天数: ${aggregated.totalReadDays}
+- 总阅读量: ${aggregated.totalArticles} 篇
+- 日均阅读: ${aggregated.avgDailyRead} 篇
+- 平均时长: ${aggregated.avgReadDuration} 秒
+- 推荐命中率: ${recHitRate >= 0 ? (recHitRate * 100).toFixed(0) + '%' : '暂无数据'}
+- 订阅源偏好: ${feedRanking || '暂无'}
+- 搜索关键词: ${aggregated.topKeywords.join('、') || '暂无'}
+
+## 最近 7 天已读文章标题
+${titleList}
+
+## 用户主动标记"有价值"的文章
+${likedList}
+
+## 用户主动标记"不感兴趣"的文章
+${dislikedList}
+
+请输出以下 JSON（不要输出其他内容）：
+{
+  "topics": [{"name": "话题关键词", "weight": 0.8}],
+  "trend": "与之前相比兴趣变化的一句话描述",
+  "style": "阅读风格标签（如深度技术阅读者、快速信息扫描者等）",
+  "dislikePatterns": "用户不感兴趣的内容模式描述"
+}
+
+topics 提取 5-8 个话题关键词，weight 范围 0-1。`;
+
+    const response = await AIService.getInstance().chat(
+      Constants.AI_PROFILE_SYSTEM_PROMPT,
+      userPrompt,
+      Constants.AI_PROFILE_MAX_TOKENS
+    );
+
+    return this.parseAIInsightResponse(response);
+  }
+
+  /**
+   * 解析 AI 返回的 JSON 洞察
+   */
+  private parseAIInsightResponse(response: string): AIProfileInsight {
+    const defaultResult: AIProfileInsight = {
+      topics: [], trend: '', style: '', dislikePatterns: ''
+    };
+    try {
+      // 提取 JSON 部分（AI 可能在 JSON 前后加文字）
+      const jsonMatch = response.match(/\{[\s\S]*\}/);
+      if (!jsonMatch) {
+        return defaultResult;
+      }
+      const parsed = JSON.parse(jsonMatch[0]) as Record<string, Object>;
+      const topics: TopicItem[] = [];
+      if (Array.isArray(parsed['topics'])) {
+        for (const t of parsed['topics'] as Array<Record<string, Object>>) {
+          const name = String(t['name'] ?? '');
+          const weight = Number(t['weight'] ?? 0);
+          if (name && weight > 0) {
+            const item: TopicItem = { name, weight };
+            topics.push(item);
+          }
+        }
+      }
+      return {
+        topics: topics.slice(0, 8),
+        trend: String(parsed['trend'] ?? ''),
+        style: String(parsed['style'] ?? ''),
+        dislikePatterns: String(parsed['dislikePatterns'] ?? '')
+      };
+    } catch (e) {
+      console.warn('ProfileService', `parseAIInsightResponse failed: ${String(e)}`);
+      return defaultResult;
+    }
+  }
+
+  /**
+   * 计算推荐命中率（最近 N 天 AI_REC_HIT / 总推荐曝光）
+   * 返回 -1 表示无数据
+   */
+  private calcRecommendationHitRate(recentStats: DailyStats[]): number {
+    // AI_REC_HIT 行为记录在日志中，但 DailyStats 未直接统计
+    // 简化处理：返回 -1 表示暂无数据，由 AI 综合时标注
+    // 后续可通过在 DailyStats 中增加 recHitCount 来精确计算
+    return -1;
   }
 
   /**
@@ -311,11 +560,42 @@ export class ProfileService {
   }
 
   /**
-   * 计算偏好阅读时段（基于日志时间统计，简化版：使用固定偏好）
+   * 计算偏好阅读时段
    */
-  private calcPreferredReadTime(_dailyStatsList: DailyStats[]): string {
-    // TODO: 实现时段统计（需要从行为时间戳分析），当前返回占位文本
-    return '待分析';
+  private calcPreferredReadTime(dailyStatsList: DailyStats[]): string {
+    const slots: Record<string, number> = {
+      '凌晨 (0-6点)': 0,
+      '早晨 (6-9点)': 0,
+      '上午 (9-12点)': 0,
+      '下午 (12-18点)': 0,
+      '傍晚 (18-21点)': 0,
+      '深夜 (21-24点)': 0
+    };
+    const slotKeys = Object.keys(slots);
+
+    for (const d of dailyStatsList) {
+      for (const ts of d.readTimestamps) {
+        const hourStr = ts.split(':')[0];
+        const hour = parseInt(hourStr, 10);
+        if (isNaN(hour)) continue;
+        if (hour < 6) slots[slotKeys[0]]++;
+        else if (hour < 9) slots[slotKeys[1]]++;
+        else if (hour < 12) slots[slotKeys[2]]++;
+        else if (hour < 18) slots[slotKeys[3]]++;
+        else if (hour < 21) slots[slotKeys[4]]++;
+        else slots[slotKeys[5]]++;
+      }
+    }
+
+    let maxSlot = '待分析';
+    let maxCount = 0;
+    for (const key of slotKeys) {
+      if (slots[key] > maxCount) {
+        maxCount = slots[key];
+        maxSlot = key;
+      }
+    }
+    return maxCount > 0 ? maxSlot : '待分析';
   }
 
   /**
@@ -344,6 +624,25 @@ export class ProfileService {
 
     if (profile.topicInterests.length > 0) {
       lines.push(`## 话题偏好`, ``, InterestCalculator.serializeToMarkdown(profile.topicInterests));
+    }
+
+    if (profile.searchKeywords && profile.searchKeywords.length > 0) {
+      lines.push(`## 搜索兴趣`, ``,
+        `近期高频搜索：${profile.searchKeywords.join('、')}`, ``);
+    }
+
+    // AI 洞察章节
+    if (profile.aiInsight || profile.readingStyle || profile.dislikePatterns) {
+      lines.push(`## AI 洞察`, ``);
+      if (profile.readingStyle) {
+        lines.push(`**阅读风格**：${profile.readingStyle}`, ``);
+      }
+      if (profile.aiInsight) {
+        lines.push(`**兴趣变化**：${profile.aiInsight}`, ``);
+      }
+      if (profile.dislikePatterns) {
+        lines.push(`**不感兴趣的内容**：${profile.dislikePatterns}`, ``);
+      }
     }
 
     return lines.join('\n');

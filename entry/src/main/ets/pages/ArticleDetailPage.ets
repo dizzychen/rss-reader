@@ -1,5 +1,5 @@
-// 文章详情页（原生 ArkTS 渲染，无需 WebView/ArkWeb）
 import { router } from '@kit.ArkUI';
+import { webview } from '@kit.ArkWeb';
 import { Article } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { RssService } from '../service/RssService';
@@ -28,9 +28,14 @@ struct ArticleDetailPage {
   @State showAIPanel: boolean = false;
   @State aiAnalysis: string = '';
   @State isAILoading: boolean = false;
-  @State contentBlocks: ContentBlock[] = [];  // 图文混排内容块
+  @State contentBlocks: ContentBlock[] = [];
+  @State userRating: number = 0;
+  @State showWebView: boolean = false;
+  @State webViewLoading: boolean = false;
+  @State openOriginalInApp: boolean = true;
   private articleId: number = -1;
-  private readStartTime: number = 0;  // 记录开始阅读时间
+  private readStartTime: number = 0;
+  private webController: webview.WebviewController = new webview.WebviewController();
 
   aboutToAppear() {
     const params = this.getUIContext().getRouter().getParams();
@@ -39,7 +44,7 @@ struct ArticleDetailPage {
     }
     this.loadArticle();
     this.loadFontSize();
-    // 记录开始阅读时间
+    this.loadOpenOriginalSetting();
     this.readStartTime = Date.now();
   }
 
@@ -66,6 +71,11 @@ struct ArticleDetailPage {
     const settings = await SettingsService.getInstance().getSettings();
     const idx = Constants.FONT_SIZES.indexOf(settings.fontSize);
     this.fontSizeIndex = idx >= 0 ? idx : 1;
+  }
+
+  async loadOpenOriginalSetting() {
+    const settings = await SettingsService.getInstance().getSettings();
+    this.openOriginalInApp = settings.openOriginalInApp;
   }
 
   async loadArticle() {
@@ -183,6 +193,22 @@ struct ArticleDetailPage {
     return text;
   }
 
+  private submitRating(score: number) {
+    if (!this.article || this.userRating !== 0) return;
+    this.userRating = score;
+    MemoryService.getInstance().recordBehavior({
+      timestamp: Date.now(),
+      action: 'RATE',
+      articleId: this.article.id,
+      articleTitle: this.article.title,
+      feedTitle: this.feedTitle,
+      score: score
+    });
+    this.getUIContext().getPromptAction().showToast({
+      message: score > 0 ? '已标记为有价值' : '已标记为不感兴趣'
+    });
+  }
+
   /**
    * 触发 AI 解读分析
    */
@@ -212,6 +238,40 @@ struct ArticleDetailPage {
     } finally {
       this.isAILoading = false;
     }
+  }
+
+  private openInExternalBrowser() {
+    if (!this.article?.url) return;
+    const want: Want = {
+      action: 'ohos.want.action.viewData',
+      uri: this.article.url
+    };
+    const ctx = this.getUIContext().getHostContext();
+    if (ctx) {
+      (ctx as common.UIAbilityContext).startAbility(want).catch((e: Error) => {
+        console.error('ArticleDetailPage', `打开原文失败: ${e.message}`);
+      });
+    }
+  }
+
+  @Builder
+  viewTab(label: string, active: boolean, onClick: () => void) {
+    Column() {
+      Text(label)
+        .fontSize(14)
+        .fontWeight(active ? FontWeight.Bold : FontWeight.Normal)
+        .fontColor(active
+          ? $r('sys.color.ohos_id_color_activated')
+          : $r('sys.color.ohos_id_color_text_secondary'))
+        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
+      Divider()
+        .width(active ? 24 : 0)
+        .strokeWidth(2)
+        .color($r('sys.color.ohos_id_color_activated'))
+        .margin({ top: 4 })
+    }
+    .onClick(onClick)
+    .margin({ right: 16 })
   }
 
   build() {
@@ -299,7 +359,6 @@ struct ArticleDetailPage {
       Divider().color($r('sys.color.ohos_id_color_list_separator'))
 
       if (this.article === null) {
-        // 加载中
         Column() {
           LoadingProgress().width(40).height(40)
           Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
@@ -307,116 +366,193 @@ struct ArticleDetailPage {
         .width('100%').layoutWeight(1).justifyContent(FlexAlign.Center)
       } else {
         Column() {
-          Scroll() {
-            Column({ space: 0 }) {
-
-              // 标题
-              Text(this.article.title)
-                .fontSize(Constants.FONT_SIZES[this.fontSizeIndex] + 4)
-                .fontWeight(FontWeight.Bold)
-                .fontColor($r('sys.color.ohos_id_color_text_primary'))
-                .lineHeight((Constants.FONT_SIZES[this.fontSizeIndex] + 4) * 1.5)
-                .width('100%')
-
-              // 来源信息区块：来源 + 时间在同一行
-              Row({ space: 8 }) {
-                if (this.feedTitle) {
-                  SymbolGlyph($r('sys.symbol.discover'))
-                    .fontSize(11)
-                    .fontColor([$r('sys.color.ohos_id_color_activated')])
-                  Text(this.feedTitle)
-                    .fontSize(12)
-                    .fontColor($r('sys.color.ohos_id_color_activated'))
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .constraintSize({ maxWidth: '50%' })
+          // 视图切换 Tab（有 URL 时显示）
+          if (this.article.url) {
+            Row() {
+              this.viewTab('RSS 内容', !this.showWebView, () => { this.showWebView = false; })
+              this.viewTab('查看原文', this.showWebView, () => {
+                if (this.openOriginalInApp) {
+                  this.showWebView = true;
+                } else {
+                  this.openInExternalBrowser();
                 }
-                if (this.article.author) {
-                  Text(this.article.author)
-                    .fontSize(12)
-                    .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-                    .maxLines(1)
-                    .textOverflow({ overflow: TextOverflow.Ellipsis })
-                    .constraintSize({ maxWidth: '30%' })
-                }
-                Blank()
-                Text(RssService.getInstance().formatDate(this.article.publishedAt))
-                  .fontSize(12)
-                  .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-              }
-              .width('100%')
-              .margin({ top: 8 })
-              .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
-              .borderRadius(8)
-              .padding({ left: 12, right: 12, top: 10, bottom: 10 })
-
-              Divider()
-                .color($r('sys.color.ohos_id_color_list_separator'))
-                .margin({ top: 16, bottom: 16 })
-
-              // 正文（图文混排）
-              if (this.contentBlocks.length > 0) {
-                ForEach(this.contentBlocks, (block: ContentBlock, index: number) => {
-                  if (block.type === 'text') {
-                    Text(block.content)
-                      .fontSize(Constants.FONT_SIZES[this.fontSizeIndex])
-                      .fontColor($r('sys.color.ohos_id_color_text_primary'))
-                      .lineHeight(Constants.FONT_SIZES[this.fontSizeIndex] * 1.8)
-                      .width('100%')
-                      .wordBreak(WordBreak.BREAK_WORD)
-                      .margin({ bottom: 16 })
-                  } else if (block.type === 'image') {
-                    Image(block.content)
-                      .width('100%')
-                      .objectFit(ImageFit.Contain)
-                      .borderRadius(8)
-                      .margin({ top: 8, bottom: 16 })
-                  }
-                }, (block: ContentBlock, index: number) => `${index}-${block.type}`)
-              } else {
-                Text(this.article.summary || '（暂无内容）')
-                  .fontSize(Constants.FONT_SIZES[this.fontSizeIndex])
-                  .fontColor($r('sys.color.ohos_id_color_text_primary'))
-                  .lineHeight(Constants.FONT_SIZES[this.fontSizeIndex] * 1.8)
-                  .width('100%')
-                  .wordBreak(WordBreak.BREAK_WORD)
-              }
-
-              // 查看原文链接
-              if (this.article.url) {
-                Row({ space: 4 }) {
-                  Text('查看原文')
-                    .fontSize(14)
-                    .fontColor($r('sys.color.ohos_id_color_activated'))
-                  SymbolGlyph($r('sys.symbol.arrow_up_right'))
-                    .fontSize(12)
-                    .fontColor([$r('sys.color.ohos_id_color_activated')])
-                }
-                .margin({ top: 24 })
-                .onClick(() => {
-                  if (this.article?.url) {
-                    const want: Want = {
-                      action: 'ohos.want.action.viewData',
-                      uri: this.article.url
-                    };
-                    const ctx = this.getUIContext().getHostContext();
-                    if (ctx) {
-                      (ctx as common.UIAbilityContext).startAbility(want).catch((e: Error) => {
-                        console.error('ArticleDetailPage', `打开原文失败: ${e.message}`);
-                      });
-                    }
-                  }
-                })
-              }
-
+              })
             }
             .width('100%')
-            .padding({ left: 16, right: 16, top: 20, bottom: 40 })
-            .alignItems(HorizontalAlign.Start)
+            .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+            .backgroundColor($r('sys.color.ohos_id_color_background'))
           }
-          .align(Alignment.TopStart)
-          .layoutWeight(1)
-          .scrollBar(BarState.Auto)
+
+          if (this.showWebView && this.article.url) {
+            // WebView 原文模式
+            Stack() {
+              Web({ src: this.article.url, controller: this.webController })
+                .javaScriptAccess(true)
+                .domStorageAccess(true)
+                .mixedMode(MixedMode.Compatible)
+                .onPageBegin(() => {
+                  this.webViewLoading = true;
+                })
+                .onPageEnd(() => {
+                  this.webViewLoading = false;
+                })
+                .onErrorReceive((event) => {
+                  console.error('ArticleDetailPage', `WebView error: ${event?.error?.getErrorInfo()}`);
+                  this.webViewLoading = false;
+                })
+                .width('100%')
+                .height('100%')
+
+              if (this.webViewLoading) {
+                Column() {
+                  LoadingProgress().width(36).height(36)
+                  Text('正在加载原文...')
+                    .fontSize(13)
+                    .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                    .margin({ top: 8 })
+                }
+                .width('100%')
+                .height('100%')
+                .justifyContent(FlexAlign.Center)
+                .backgroundColor('#80FFFFFF')
+              }
+            }
+            .width('100%')
+            .layoutWeight(1)
+          } else {
+            // RSS 内容模式（原有逻辑）
+            Scroll() {
+              Column({ space: 0 }) {
+                Text(this.article.title)
+                  .fontSize(Constants.FONT_SIZES[this.fontSizeIndex] + 4)
+                  .fontWeight(FontWeight.Bold)
+                  .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                  .lineHeight((Constants.FONT_SIZES[this.fontSizeIndex] + 4) * 1.5)
+                  .width('100%')
+
+                Row({ space: 8 }) {
+                  if (this.feedTitle) {
+                    SymbolGlyph($r('sys.symbol.discover'))
+                      .fontSize(11)
+                      .fontColor([$r('sys.color.ohos_id_color_activated')])
+                    Text(this.feedTitle)
+                      .fontSize(12)
+                      .fontColor($r('sys.color.ohos_id_color_activated'))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .constraintSize({ maxWidth: '50%' })
+                  }
+                  if (this.article.author) {
+                    Text(this.article.author)
+                      .fontSize(12)
+                      .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                      .maxLines(1)
+                      .textOverflow({ overflow: TextOverflow.Ellipsis })
+                      .constraintSize({ maxWidth: '30%' })
+                  }
+                  Blank()
+                  Text(RssService.getInstance().formatDate(this.article.publishedAt))
+                    .fontSize(12)
+                    .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+                }
+                .width('100%')
+                .margin({ top: 8 })
+                .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+                .borderRadius(8)
+                .padding({ left: 12, right: 12, top: 10, bottom: 10 })
+
+                Divider()
+                  .color($r('sys.color.ohos_id_color_list_separator'))
+                  .margin({ top: 16, bottom: 16 })
+
+                if (this.contentBlocks.length > 0) {
+                  ForEach(this.contentBlocks, (block: ContentBlock, index: number) => {
+                    if (block.type === 'text') {
+                      Text(block.content)
+                        .fontSize(Constants.FONT_SIZES[this.fontSizeIndex])
+                        .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                        .lineHeight(Constants.FONT_SIZES[this.fontSizeIndex] * 1.8)
+                        .width('100%')
+                        .wordBreak(WordBreak.BREAK_WORD)
+                        .margin({ bottom: 16 })
+                    } else if (block.type === 'image') {
+                      Image(block.content)
+                        .width('100%')
+                        .objectFit(ImageFit.Contain)
+                        .borderRadius(8)
+                        .margin({ top: 8, bottom: 16 })
+                    }
+                  }, (block: ContentBlock, index: number) => `${index}-${block.type}`)
+                } else {
+                  Text(this.article.summary || '（暂无内容）')
+                    .fontSize(Constants.FONT_SIZES[this.fontSizeIndex])
+                    .fontColor($r('sys.color.ohos_id_color_text_primary'))
+                    .lineHeight(Constants.FONT_SIZES[this.fontSizeIndex] * 1.8)
+                    .width('100%')
+                    .wordBreak(WordBreak.BREAK_WORD)
+                }
+
+                // 文章反馈区
+                Divider()
+                  .color($r('sys.color.ohos_id_color_list_separator'))
+                  .margin({ top: 24, bottom: 16 })
+
+                Column({ space: 8 }) {
+                  Text('这篇文章对你有帮助吗？')
+                    .fontSize(13)
+                    .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+                  Row({ space: 16 }) {
+                    Button() {
+                      Row({ space: 4 }) {
+                        Text('👍')
+                          .fontSize(16)
+                        Text('有价值')
+                          .fontSize(13)
+                          .fontColor(this.userRating === 1
+                            ? Color.White
+                            : $r('sys.color.ohos_id_color_text_primary'))
+                      }
+                    }
+                    .height(36)
+                    .borderRadius(18)
+                    .backgroundColor(this.userRating === 1
+                      ? '#4CAF50'
+                      : $r('sys.color.ohos_id_color_button_normal'))
+                    .enabled(this.userRating === 0)
+                    .onClick(() => this.submitRating(1))
+
+                    Button() {
+                      Row({ space: 4 }) {
+                        Text('👎')
+                          .fontSize(16)
+                        Text('不感兴趣')
+                          .fontSize(13)
+                          .fontColor(this.userRating === -1
+                            ? Color.White
+                            : $r('sys.color.ohos_id_color_text_primary'))
+                      }
+                    }
+                    .height(36)
+                    .borderRadius(18)
+                    .backgroundColor(this.userRating === -1
+                      ? '#F44336'
+                      : $r('sys.color.ohos_id_color_button_normal'))
+                    .enabled(this.userRating === 0)
+                    .onClick(() => this.submitRating(-1))
+                  }
+                }
+                .width('100%')
+                .alignItems(HorizontalAlign.Center)
+
+              }
+              .width('100%')
+              .padding({ left: 16, right: 16, top: 20, bottom: 40 })
+              .alignItems(HorizontalAlign.Start)
+            }
+            .align(Alignment.TopStart)
+            .layoutWeight(1)
+            .scrollBar(BarState.Auto)
+          }
 
           // AI 解读面板（底部浮层）
           if (this.showAIPanel) {

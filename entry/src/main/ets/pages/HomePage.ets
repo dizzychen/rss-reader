@@ -23,6 +23,8 @@ export struct HomePage {
   private pageOffset: number = 0;
   private pageSize: number = 30;
   private feedMap: Map<number, string> = new Map();
+  private exposedArticleIds: Map<number, string> = new Map();
+  private aiTopRankedIds: number[] = [];
 
   aboutToAppear() {
     this.loadAISettings();
@@ -44,6 +46,7 @@ export struct HomePage {
 
   async loadArticles(reset: boolean = true) {
     if (reset) {
+      this.flushSkipBehaviors();
       this.pageOffset = 0;
       this.hasMore = true;
       this.isLoading = true;
@@ -68,11 +71,17 @@ export struct HomePage {
       }
       if (reset) {
         this.articles = items;
+        this.exposedArticleIds.clear();
       } else {
         this.articles = this.articles.concat(items);
       }
+      // 记录曝光的文章 ID
+      for (const item of items) {
+        if (item.id !== undefined) {
+          this.exposedArticleIds.set(item.id, item.feedTitle ?? '');
+        }
+      }
       this.pageOffset += items.length;
-      // 返回数量不足一页，说明已到末尾
       this.hasMore = items.length >= this.pageSize;
 
       // AI 排序（仅在 reset 且启用时）
@@ -99,6 +108,45 @@ export struct HomePage {
     } finally {
       this.isRefreshing = false;
     }
+  }
+
+  /**
+   * 将当前曝光但未点击的文章批量记录为 SKIP
+   */
+  private flushSkipBehaviors() {
+    if (this.exposedArticleIds.size <= 3) {
+      return;
+    }
+    const now = Date.now();
+    this.exposedArticleIds.forEach((feedTitle, articleId) => {
+      MemoryService.getInstance().recordBehavior({
+        timestamp: now,
+        action: 'SKIP',
+        articleId: articleId,
+        feedTitle: feedTitle
+      });
+    });
+    this.exposedArticleIds.clear();
+  }
+
+  /**
+   * 标记文章为不感兴趣（列表左滑操作）
+   */
+  private markDislike(article: Article) {
+    MemoryService.getInstance().recordBehavior({
+      timestamp: Date.now(),
+      action: 'RATE',
+      articleId: article.id,
+      articleTitle: article.title,
+      feedTitle: article.feedTitle,
+      score: -1
+    });
+    const idx = this.articles.findIndex(a => a.id === article.id);
+    if (idx >= 0) {
+      this.articles.splice(idx, 1);
+      this.articles = [...this.articles];
+    }
+    this.exposedArticleIds.delete(article.id!);
   }
 
   /**
@@ -134,12 +182,28 @@ export struct HomePage {
 
       if (sorted.length > 0) {
         this.articles = sorted;
+        // 记录 AI 推荐的前 5 篇文章 ID，用于命中追踪
+        this.aiTopRankedIds = rankedIds.slice(0, 5);
       }
     } catch (e) {
       console.warn('HomePage', `AI 排序失败，降级为时间排序: ${e}`);
     } finally {
       this.isAISorting = false;
     }
+  }
+
+  @Builder
+  swipeDislikeBuilder(article: Article) {
+    Row() {
+      Text('不感兴趣')
+        .fontSize(13)
+        .fontColor(Color.White)
+    }
+    .width(80)
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+    .backgroundColor('#F44336')
+    .onClick(() => this.markDislike(article))
   }
 
   build() {
@@ -216,6 +280,20 @@ export struct HomePage {
                 ArticleItemComponent({
                   article: article,
                   onTap: () => {
+                    // 从曝光集合中移除（不算 SKIP）
+                    if (article.id !== undefined) {
+                      this.exposedArticleIds.delete(article.id);
+                      // AI 推荐命中追踪
+                      if (this.aiTopRankedIds.includes(article.id)) {
+                        MemoryService.getInstance().recordBehavior({
+                          timestamp: Date.now(),
+                          action: 'AI_REC_HIT',
+                          articleId: article.id,
+                          articleTitle: article.title,
+                          feedTitle: article.feedTitle
+                        });
+                      }
+                    }
                     this.getUIContext().getRouter().pushUrl({
                       url: 'pages/ArticleDetailPage',
                       params: { articleId: article.id }
@@ -239,6 +317,13 @@ export struct HomePage {
                   }
                 })
               }
+              .swipeAction({
+                end: {
+                  builder: () => {
+                    this.swipeDislikeBuilder(article)
+                  }
+                }
+              })
             }, (article: Article) => `${article.id}-${article.isStarred}-${article.isRead}`)
 
             // 加载更多

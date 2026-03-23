@@ -72,19 +72,27 @@ export class InterestCalculator {
 
   /**
    * 从文章阅读行为计算信号强度
-   * @param readCount   阅读次数
-   * @param starCount   收藏次数
-   * @param totalDays   计算周期天数（归一化分母）
+   * @param readCount    阅读次数
+   * @param starCount    收藏次数
+   * @param totalDays    计算周期天数（归一化分母）
+   * @param avgDuration  该源平均阅读时长（秒），0 表示无数据
+   * @param dislikeCount 用户主动标记不感兴趣的次数
    * @returns 信号强度 [0, 1]
    */
-  static calcSignal(readCount: number, starCount: number, totalDays: number): number {
+  static calcSignal(readCount: number, starCount: number, totalDays: number,
+    avgDuration: number = 0, dislikeCount: number = 0): number {
     if (totalDays <= 0) {
       return 0;
     }
-    // 收藏权重更高（×3）
-    const score = (readCount + starCount * 3) / totalDays;
-    // Sigmoid 压缩到 [0, 1]
-    return 1 / (1 + Math.exp(-score + 2));
+    let durationFactor = 1.0;
+    if (avgDuration > 180) {
+      durationFactor = 1.5;
+    } else if (avgDuration > 0 && avgDuration < 30) {
+      durationFactor = 0.5;
+    }
+    const dislikePenalty = dislikeCount > 0 ? Math.pow(0.5, dislikeCount) : 1.0;
+    const score = (readCount * durationFactor + starCount * 3) / totalDays;
+    return (1 / (1 + Math.exp(-score + 2))) * dislikePenalty;
   }
 
   /**

@@ -216,13 +216,15 @@ export class MemoryService {
     const d = new Date(b.timestamp);
     const time = DateUtil.formatTime(d);
     const action = b.action;
-    const title = b.articleTitle ? b.articleTitle.substring(0, 30).replace(/\|/g, '\\|') : '-';
+    const title = b.articleTitle ? b.articleTitle.substring(0, 80).replace(/\|/g, '\\|') : '-';
     const feed = b.feedTitle ? b.feedTitle.replace(/\|/g, '\\|') : '-';
     let extra = '-';
     if (b.action === 'READ_END' && b.duration !== undefined) {
       extra = DateUtil.formatDuration(b.duration);
     } else if (b.action === 'SEARCH' && b.keyword) {
       extra = b.keyword.replace(/\|/g, '\\|');
+    } else if (b.action === 'RATE' && b.score !== undefined) {
+      extra = b.score > 0 ? '👍' : '👎';
     }
     return `| ${time} | ${action} | ${title} | ${feed} | ${extra} |`;
   }
@@ -370,9 +372,14 @@ export class MemoryService {
       }
 
       if (todayLog.trim()) {
-        // 仅取前 50 行日志作为摘要，避免上下文过长
         const logLines = todayLog.split('\n').slice(0, 50).join('\n');
         parts.push(`## 今日阅读行为\n${logLines}`);
+      }
+
+      // 提取画像中的 AI 洞察摘要（话题、风格、不感兴趣模式）供排序/简报使用
+      const insightSummary = this.extractProfileInsights(profile);
+      if (insightSummary) {
+        parts.push(`## 个性化摘要\n${insightSummary}`);
       }
 
       return parts.join('\n\n');
@@ -381,6 +388,41 @@ export class MemoryService {
       console.error('MemoryService', `buildAIContext failed: ${msg}`);
       return '';
     }
+  }
+
+  /**
+   * 从 PROFILE.md 中提取 AI 洞察关键段落
+   */
+  private extractProfileInsights(profile: string): string {
+    if (!profile.trim()) {
+      return '';
+    }
+    const sections = ['## AI 洞察', '## 搜索兴趣'];
+    const parts: string[] = [];
+    for (const header of sections) {
+      const lines = profile.split('\n');
+      let inSection = false;
+      const sectionLines: string[] = [];
+      for (const line of lines) {
+        if (line.startsWith('## ')) {
+          if (inSection) {
+            break;
+          }
+          if (line.startsWith(header)) {
+            inSection = true;
+            sectionLines.push(line);
+            continue;
+          }
+        }
+        if (inSection) {
+          sectionLines.push(line);
+        }
+      }
+      if (sectionLines.length > 0) {
+        parts.push(sectionLines.join('\n').trim());
+      }
+    }
+    return parts.join('\n\n');
   }
 
   // ===== AI 排序缓存 =====

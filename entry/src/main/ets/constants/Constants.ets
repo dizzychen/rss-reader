@@ -81,4 +81,10 @@ export class Constants {
   // 通义千问 API
   static readonly QWEN_API_URL: string = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
   static readonly QWEN_MODEL: string = 'qwen-plus';
+
+  // AI 画像综合
+  static readonly AI_PROFILE_MAX_TOKENS: number = 800;
+  static readonly AI_PROFILE_SYSTEM_PROMPT: string =
+    '你是一个阅读行为分析专家，负责根据用户的阅读数据生成画像洞察。' +
+    '你的输出必须是严格的 JSON 格式，不要包含任何其他文字。';
 }
