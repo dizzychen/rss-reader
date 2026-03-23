@@ -254,25 +254,7 @@ struct ArticleDetailPage {
     }
   }
 
-  @Builder
-  viewTab(label: string, active: boolean, onClick: () => void) {
-    Column() {
-      Text(label)
-        .fontSize(14)
-        .fontWeight(active ? FontWeight.Bold : FontWeight.Normal)
-        .fontColor(active
-          ? $r('sys.color.ohos_id_color_activated')
-          : $r('sys.color.ohos_id_color_text_secondary'))
-        .padding({ left: 12, right: 12, top: 6, bottom: 6 })
-      Divider()
-        .width(active ? 24 : 0)
-        .strokeWidth(2)
-        .color($r('sys.color.ohos_id_color_activated'))
-        .margin({ top: 4 })
-    }
-    .onClick(onClick)
-    .margin({ right: 16 })
-  }
+
 
   build() {
     Column() {
@@ -369,14 +351,39 @@ struct ArticleDetailPage {
           // 视图切换 Tab（有 URL 时显示）
           if (this.article.url) {
             Row() {
-              this.viewTab('RSS 内容', !this.showWebView, () => { this.showWebView = false; })
-              this.viewTab('查看原文', this.showWebView, () => {
-                if (this.openOriginalInApp) {
+              // RSS 内容 Tab
+              Text('RSS 内容')
+                .fontSize(14)
+                .fontWeight(!this.showWebView ? FontWeight.Medium : FontWeight.Normal)
+                .fontColor(!this.showWebView ? Color.White : $r('sys.color.ohos_id_color_text_secondary'))
+                .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+                .backgroundColor(!this.showWebView ? $r('sys.color.ohos_id_color_activated') : Color.Transparent)
+                .borderRadius(18)
+                .border({
+                  width: !this.showWebView ? 0 : 1,
+                  color: $r('sys.color.ohos_id_color_component_normal')
+                })
+                .onClick(() => { this.showWebView = false; })
+                .margin({ right: 8 })
+
+              // 查看原文 Tab
+              Text('查看原文')
+                .fontSize(14)
+                .fontWeight(this.showWebView ? FontWeight.Medium : FontWeight.Normal)
+                .fontColor(this.showWebView ? Color.White : $r('sys.color.ohos_id_color_text_secondary'))
+                .padding({ left: 16, right: 16, top: 8, bottom: 8 })
+                .backgroundColor(this.showWebView ? $r('sys.color.ohos_id_color_activated') : Color.Transparent)
+                .borderRadius(18)
+                .border({
+                  width: this.showWebView ? 0 : 1,
+                  color: $r('sys.color.ohos_id_color_component_normal')
+                })
+                .onClick(() => {
                   this.showWebView = true;
-                } else {
-                  this.openInExternalBrowser();
-                }
-              })
+                  if (!this.openOriginalInApp) {
+                    this.openInExternalBrowser();
+                  }
+                })
             }
             .width('100%')
             .padding({ left: 16, right: 16, top: 8, bottom: 8 })
@@ -497,47 +504,74 @@ struct ArticleDetailPage {
                   .color($r('sys.color.ohos_id_color_list_separator'))
                   .margin({ top: 24, bottom: 16 })
 
-                Column({ space: 8 }) {
+                Column({ space: 12 }) {
                   Text('这篇文章对你有帮助吗？')
-                    .fontSize(13)
+                    .fontSize(14)
                     .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-                  Row({ space: 16 }) {
-                    Button() {
-                      Row({ space: 4 }) {
-                        Text('👍')
-                          .fontSize(16)
-                        Text('有价值')
-                          .fontSize(13)
-                          .fontColor(this.userRating === 1
-                            ? Color.White
-                            : $r('sys.color.ohos_id_color_text_primary'))
-                      }
+
+                  Row({ space: 12 }) {
+                    // 有价值按钮
+                    Row({ space: 6 }) {
+                      SymbolGlyph(this.userRating === 1
+                        ? $r('sys.symbol.hand_thumbsup_fill')
+                        : $r('sys.symbol.hand_thumbsup'))
+                        .fontSize(18)
+                        .fontColor([this.userRating === 1
+                          ? $r('sys.color.ohos_id_color_activated')
+                          : $r('sys.color.ohos_id_color_text_secondary')])
+                      Text('有价值')
+                        .fontSize(14)
+                        .fontColor(this.userRating === 1
+                          ? $r('sys.color.ohos_id_color_activated')
+                          : $r('sys.color.ohos_id_color_text_secondary'))
                     }
-                    .height(36)
-                    .borderRadius(18)
+                    .height(40)
+                    .padding({ left: 16, right: 16 })
+                    .borderRadius(20)
                     .backgroundColor(this.userRating === 1
-                      ? '#4CAF50'
-                      : $r('sys.color.ohos_id_color_button_normal'))
+                      ? '#1A0A59F7'  // 激活状态的浅蓝色背景
+                      : $r('sys.color.ohos_id_color_sub_background'))
+                    .border({
+                      width: 1,
+                      color: this.userRating === 1
+                        ? $r('sys.color.ohos_id_color_activated')
+                        : $r('sys.color.ohos_id_color_component_normal'),
+                      style: BorderStyle.Solid
+                    })
                     .enabled(this.userRating === 0)
+                    .opacity(this.userRating === -1 ? 0.4 : 1.0)
                     .onClick(() => this.submitRating(1))
 
-                    Button() {
-                      Row({ space: 4 }) {
-                        Text('👎')
-                          .fontSize(16)
-                        Text('不感兴趣')
-                          .fontSize(13)
-                          .fontColor(this.userRating === -1
-                            ? Color.White
-                            : $r('sys.color.ohos_id_color_text_primary'))
-                      }
+                    // 不感兴趣按钮
+                    Row({ space: 6 }) {
+                      SymbolGlyph(this.userRating === -1
+                        ? $r('sys.symbol.hand_thumbsdown_fill')
+                        : $r('sys.symbol.hand_thumbsdown'))
+                        .fontSize(18)
+                        .fontColor([this.userRating === -1
+                          ? $r('sys.color.ohos_id_color_warning')
+                          : $r('sys.color.ohos_id_color_text_secondary')])
+                      Text('不感兴趣')
+                        .fontSize(14)
+                        .fontColor(this.userRating === -1
+                          ? $r('sys.color.ohos_id_color_warning')
+                          : $r('sys.color.ohos_id_color_text_secondary'))
                     }
-                    .height(36)
-                    .borderRadius(18)
+                    .height(40)
+                    .padding({ left: 16, right: 16 })
+                    .borderRadius(20)
                     .backgroundColor(this.userRating === -1
-                      ? '#F44336'
-                      : $r('sys.color.ohos_id_color_button_normal'))
+                      ? '#1AE84026'  // 警告状态的浅红色背景
+                      : $r('sys.color.ohos_id_color_sub_background'))
+                    .border({
+                      width: 1,
+                      color: this.userRating === -1
+                        ? $r('sys.color.ohos_id_color_warning')
+                        : $r('sys.color.ohos_id_color_component_normal'),
+                      style: BorderStyle.Solid
+                    })
                     .enabled(this.userRating === 0)
+                    .opacity(this.userRating === 1 ? 0.4 : 1.0)
                     .onClick(() => this.submitRating(-1))
                   }
                 }

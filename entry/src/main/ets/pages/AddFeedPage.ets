@@ -119,7 +119,24 @@ struct AddFeedPage {
       });
 
     } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
+      let msg: string;
+      if (e instanceof Error) {
+        msg = e.message;
+      } else if (typeof e === 'object' && e !== null) {
+        // 处理 BusinessError 等对象类型
+        const errObj = e as object;
+        const errMessage = (errObj as Record<string, string>)['message'];
+        const errCode = (errObj as Record<string, number>)['code'];
+        if (errMessage) {
+          msg = errMessage;
+        } else if (errCode !== undefined) {
+          msg = `错误代码: ${errCode}`;
+        } else {
+          msg = JSON.stringify(e);
+        }
+      } else {
+        msg = String(e);
+      }
       console.error('AddFeedPage', `Error: ${msg}`);
       this.errorMsg = `添加失败：${msg}`;
       this.isProcessing = false;

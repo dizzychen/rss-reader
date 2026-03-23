@@ -47,20 +47,46 @@ export class RssService {
       const response = await httpRequest.request(url, {
         method: http.RequestMethod.GET,
         expectDataType: http.HttpDataType.STRING,
-        connectTimeout: 10000,
-        readTimeout: 15000,
+        connectTimeout: 30000,  // 增加到 30 秒
+        readTimeout: 60000,     // 增加到 60 秒
         header: {
-          'User-Agent': 'HarmonyOS-RSSReader/1.0',
-          'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*'
+          'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/100.0 Mobile Safari/537.36',
+          'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
         }
       });
       console.info(TAG, `HTTP response code: ${response.responseCode}`);
       if (response.responseCode !== 200) {
-        throw new Error(`HTTP ${response.responseCode}`);
+        throw new Error(`HTTP 请求失败 (${response.responseCode})`);
       }
       const result = typeof response.result === 'string' ? response.result : String(response.result);
       console.info(TAG, `Fetched XML length: ${result.length}`);
+      if (!result || result.length === 0) {
+        throw new Error('服务器返回空内容');
+      }
       return result;
+    } catch (e) {
+      // 处理网络错误（BusinessError）
+      if (e instanceof Error) {
+        throw e;
+      }
+      // BusinessError 类型有 code 和 message 属性
+      const errObj = e as object;
+      const code = (errObj as Record<string, number>)['code'];
+      const message = (errObj as Record<string, string>)['message'];
+      if (code !== undefined) {
+        // 提供更友好的错误提示
+        let friendlyMsg = message || '请检查网络连接';
+        if (code === 2300028) {
+          friendlyMsg = '连接超时，请检查网络或稍后重试';
+        } else if (code === 2300006) {
+          friendlyMsg = '无法解析域名，请检查网络连接';
+        } else if (code === 2300007) {
+          friendlyMsg = '无法连接服务器';
+        }
+        throw new Error(`网络错误: ${friendlyMsg}`);
+      }
+      throw new Error(`请求失败: ${JSON.stringify(e)}`);
     } finally {
       httpRequest.destroy();
     }

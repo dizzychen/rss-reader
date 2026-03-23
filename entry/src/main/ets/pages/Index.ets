@@ -115,12 +115,16 @@ struct Index {
       } else {
         // 数据库初始化中，显示加载界面
         Column() {
-          LoadingProgress().width(48).height(48)
+          LoadingProgress()
+            .width(48)
+            .height(48)
+            .backgroundColor(Color.Transparent)
           Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 12 })
         }
         .width('100%')
         .height('100%')
         .justifyContent(FlexAlign.Center)
+        .backgroundColor(Color.Transparent)
       }
     }
     .width('100%')

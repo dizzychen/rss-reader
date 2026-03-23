@@ -3,7 +3,6 @@ import { router } from '@kit.ArkUI';
 import { Article, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedRefreshService } from '../service/FeedRefreshService';
-import { AIService } from '../service/AIService';
 import { MemoryService } from '../service/MemoryService';
 import { SettingsService } from '../service/SettingsService';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
@@ -16,15 +15,12 @@ export struct HomePage {
   @State hasMore: boolean = true;
   @State onlyUnread: boolean = true;
   @State isRefreshing: boolean = false;
-  @State aiSortEnabled: boolean = false;
-  @State isAISorting: boolean = false;
   @State briefingEnabled: boolean = true;
   @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
   private pageOffset: number = 0;
   private pageSize: number = 30;
   private feedMap: Map<number, string> = new Map();
   private exposedArticleIds: Map<number, string> = new Map();
-  private aiTopRankedIds: number[] = [];
 
   aboutToAppear() {
     this.loadAISettings();
@@ -33,7 +29,6 @@ export struct HomePage {
 
   async loadAISettings() {
     try {
-      this.aiSortEnabled = await SettingsService.getInstance().getAISortEnabled();
       this.briefingEnabled = await SettingsService.getInstance().getBriefingEnabled();
     } catch (e) {
       // 忽略错误
@@ -83,11 +78,6 @@ export struct HomePage {
       }
       this.pageOffset += items.length;
       this.hasMore = items.length >= this.pageSize;
-
-      // AI 排序（仅在 reset 且启用时）
-      if (reset && this.aiSortEnabled && AIService.getInstance().hasApiKey() && this.articles.length > 0) {
-        this.applyAISort();
-      }
     } catch (e) {
       console.error('HomePage', `加载失败: ${e}`);
     } finally {
@@ -98,8 +88,6 @@ export struct HomePage {
 
   async doRefresh() {
     this.isRefreshing = true;
-    // 清除 AI 排序缓存，刷新后重新排序
-    MemoryService.getInstance().clearAIRankCache();
     try {
       await FeedRefreshService.getInstance().refreshAll(this.getUIContext().getHostContext()!);
       await this.loadArticles(true);
@@ -149,49 +137,6 @@ export struct HomePage {
     this.exposedArticleIds.delete(article.id!);
   }
 
-  /**
-   * 应用 AI 排序（后台异步，不阻塞 UI）
-   */
-  private async applyAISort() {
-    if (this.isAISorting) return;
-    this.isAISorting = true;
-    try {
-      const rankedIds = await AIService.getInstance().rankArticles(this.articles);
-      if (rankedIds.length === 0) {
-        return;  // 降级：保持原有时间排序
-      }
-
-      // 按 AI 排序结果重排文章数组
-      const idToArticle = new Map<number, Article>();
-      for (const a of this.articles) {
-        if (a.id !== undefined) {
-          idToArticle.set(a.id, a);
-        }
-      }
-
-      const sorted: Article[] = [];
-      for (const id of rankedIds) {
-        const a = idToArticle.get(id);
-        if (a) {
-          sorted.push(a);
-          idToArticle.delete(id);
-        }
-      }
-      // 未被排序到的文章追加到末尾
-      idToArticle.forEach(a => sorted.push(a));
-
-      if (sorted.length > 0) {
-        this.articles = sorted;
-        // 记录 AI 推荐的前 5 篇文章 ID，用于命中追踪
-        this.aiTopRankedIds = rankedIds.slice(0, 5);
-      }
-    } catch (e) {
-      console.warn('HomePage', `AI 排序失败，降级为时间排序: ${e}`);
-    } finally {
-      this.isAISorting = false;
-    }
-  }
-
   @Builder
   swipeDislikeBuilder(article: Article) {
     Row() {
@@ -215,18 +160,6 @@ export struct HomePage {
           .fontWeight(FontWeight.Bold)
           .fontColor($r('sys.color.ohos_id_color_text_primary'))
         Blank()
-        // AI 排序指示器
-        if (this.isAISorting) {
-          Text('AI排序中')
-            .fontSize(11)
-            .fontColor($r('sys.color.ohos_id_color_activated'))
-            .margin({ right: 6 })
-        } else if (this.aiSortEnabled && AIService.getInstance().hasApiKey()) {
-          Text('AI')
-            .fontSize(11)
-            .fontColor($r('sys.color.ohos_id_color_activated'))
-            .margin({ right: 4 })
-        }
         Toggle({ type: ToggleType.Switch, isOn: this.onlyUnread })
           .onChange((isOn) => {
             this.onlyUnread = isOn;
@@ -258,7 +191,10 @@ export struct HomePage {
       // 文章列表
       if (this.isLoading && this.articles.length === 0) {
         Column() {
-          LoadingProgress().width(40).height(40)
+          LoadingProgress()
+            .width(40)
+            .height(40)
+            .backgroundColor(Color.Transparent)
           Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
         }
         .width('100%')
@@ -283,16 +219,6 @@ export struct HomePage {
                     // 从曝光集合中移除（不算 SKIP）
                     if (article.id !== undefined) {
                       this.exposedArticleIds.delete(article.id);
-                      // AI 推荐命中追踪
-                      if (this.aiTopRankedIds.includes(article.id)) {
-                        MemoryService.getInstance().recordBehavior({
-                          timestamp: Date.now(),
-                          action: 'AI_REC_HIT',
-                          articleId: article.id,
-                          articleTitle: article.title,
-                          feedTitle: article.feedTitle
-                        });
-                      }
                     }
                     this.getUIContext().getRouter().pushUrl({
                       url: 'pages/ArticleDetailPage',
@@ -330,7 +256,10 @@ export struct HomePage {
             ListItem() {
               Row() {
                 if (this.isLoadingMore) {
-                  LoadingProgress().width(24).height(24)
+                  LoadingProgress()
+                    .width(24)
+                    .height(24)
+                    .backgroundColor(Color.Transparent)
                 } else if (this.hasMore) {
                   Button('加载更多')
                     .fontSize(14)

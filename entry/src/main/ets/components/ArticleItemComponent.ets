@@ -20,7 +20,6 @@ export struct ArticleItemComponent {
           .height(80)
           .borderRadius(8)
           .objectFit(ImageFit.Cover)
-          .backgroundColor($r('sys.color.ohos_id_color_foreground_contrary'))
       }
 
       // 文章信息
