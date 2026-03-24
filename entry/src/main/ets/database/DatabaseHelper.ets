@@ -326,6 +326,23 @@ export class DatabaseHelper {
     return await this.queryArticles(predicates);
   }
 
+  /**
+   * 获取最近 N 天内的所有未读文章（推荐排序专用）
+   * @param days 天数，默认 7 天
+   * @param maxCount 最大数量上限，防止内存过大，默认 200
+   */
+  async getRecentUnreadArticles(days: number = 7, maxCount: number = 200): Promise<Article[]> {
+    if (!this.rdbStore) return [];
+    const cutoffTimestamp = Date.now() - days * 24 * 60 * 60 * 1000;
+    const predicates = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+    predicates.greaterThanOrEqualTo('published_at', cutoffTimestamp)
+      .and()
+      .equalTo('is_read', 0)
+      .orderByDesc('published_at')
+      .limitAs(maxCount);
+    return await this.queryArticles(predicates);
+  }
+
   async getStarredArticles(limit: number = 50, offset: number = 0): Promise<Article[]> {
     const predicates = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
     predicates.equalTo('is_starred', 1).orderByDesc('published_at').limitAs(limit).offsetAs(offset);
@@ -351,6 +368,34 @@ export class DatabaseHelper {
     predicates.equalTo('id', id);
     const articles = await this.queryArticles(predicates);
     return articles.length > 0 ? articles[0] : null;
+  }
+
+  /**
+   * 批量获取文章的已读和收藏状态
+   * 返回 Map<articleId, { isRead, isStarred }>
+   */
+  async getArticlesStatus(ids: number[]): Promise<Map<number, Record<string, number>>> {
+    const result = new Map<number, Record<string, number>>();
+    if (!this.rdbStore || ids.length === 0) return result;
+    // 分批查询，每批最多 50 个 ID
+    const batchSize = 50;
+    for (let i = 0; i < ids.length; i += batchSize) {
+      const batch = ids.slice(i, i + batchSize);
+      const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+      pred.in('id', batch);
+      const rs = await this.rdbStore.query(pred, ['id', 'is_read', 'is_starred']);
+      while (rs.goToNextRow()) {
+        const id = rs.getLong(rs.getColumnIndex('id'));
+        const isRead = rs.getLong(rs.getColumnIndex('is_read'));
+        const isStarred = rs.getLong(rs.getColumnIndex('is_starred'));
+        const status: Record<string, number> = {} as Record<string, number>;
+        status['isRead'] = isRead;
+        status['isStarred'] = isStarred;
+        result.set(id, status);
+      }
+      rs.close();
+    }
+    return result;
   }
 
   async markRead(articleId: number, isRead: number): Promise<void> {

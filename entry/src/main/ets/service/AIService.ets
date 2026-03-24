@@ -1,5 +1,6 @@
 // AI 服务封装 - 支持通义千问原生 API 和 OpenAI 兼容协议
 import { http } from '@kit.NetworkKit';
+import { util } from '@kit.ArkTS';
 import { Article } from '../model/Models';
 import { Constants } from '../constants/Constants';
 import { MemoryService } from './MemoryService';
@@ -73,6 +74,7 @@ class OpenAIRequest {
   messages: OpenAIMessage[] = [];
   max_tokens: number = 0;
   temperature: number = 0;
+  stream: boolean = false;
 }
 
 class OpenAIMessage2 {
@@ -584,5 +586,195 @@ ${articleList}`;
       console.error('AIService', `analyzeArticle failed: ${msg}`);
       throw new Error(`analyzeArticle failed: ${msg}`);
     }
+  }
+
+  /**
+   * 流式精读辅助分析：通过回调逐步返回文字
+   * @param article 待分析的文章
+   * @param onChunk 每次收到新文本块时的回调
+   * @param onDone 流式输出结束时的回调
+   * @param onError 出错时的回调
+   */
+  async analyzeArticleStream(
+    article: Article,
+    onChunk: (text: string) => void,
+    onDone: () => void,
+    onError: (msg: string) => void
+  ): Promise<void> {
+    if (!this.hasApiKey()) {
+      onError('未配置 AI API Key，请在设置中配置');
+      return;
+    }
+
+    try {
+      const context = await MemoryService.getInstance().buildAIContext();
+
+      const content = (article.content || article.summary || '').substring(0, 2000);
+
+      const systemPrompt = context
+        ? `你是我的私人阅读助手，了解我的阅读偏好。\n\n${context}`
+        : '你是一个智能阅读助手。';
+
+      const userPrompt = `请对以下文章进行解读：
+
+标题：${article.title}
+来源：${article.feedTitle ?? '未知'}
+内容：${content}
+
+请提供：
+1. **文章总结**（100字以内概括全文）
+2. **核心观点**（2-3条要点）`;
+
+      await this.chatStream(systemPrompt, userPrompt, 400, onChunk, onDone, onError);
+    } catch (e) {
+      const msg = AIService.extractErrMsg(e);
+      console.error('AIService', `analyzeArticleStream failed: ${msg}`);
+      onError(msg);
+    }
+  }
+
+  /**
+   * 流式对话入口，通过 requestInStream + SSE 逐步回调文本
+   */
+  private async chatStream(
+    systemPrompt: string,
+    userPrompt: string,
+    maxTokens: number,
+    onChunk: (text: string) => void,
+    onDone: () => void,
+    onError: (msg: string) => void
+  ): Promise<void> {
+    // 统一使用 OpenAI 兼容协议的流式请求
+    const apiUrl = this.baseUrl.length > 0
+      ? this.resolveOpenAIUrl()
+      : (this.provider === 'qwen' ? this.resolveQwenStreamUrl() : this.resolveOpenAIUrl());
+
+    if (apiUrl.length === 0) {
+      onError('未配置 API 端点');
+      return;
+    }
+
+    const modelName = this.resolveModelName();
+    if (modelName.length === 0) {
+      onError('未配置模型名称');
+      return;
+    }
+
+    const messages: OpenAIMessage[] = [];
+    messages.push(new OpenAIMessage('system', systemPrompt));
+    messages.push(new OpenAIMessage('user', userPrompt));
+
+    const requestBody = new OpenAIRequest();
+    requestBody.model = modelName;
+    requestBody.messages = messages;
+    requestBody.max_tokens = maxTokens;
+    requestBody.temperature = 0.7;
+    requestBody.stream = true;
+
+    const httpRequest = http.createHttp();
+    let sseBuffer = '';
+
+    // 订阅流式数据接收
+    httpRequest.on('dataReceive', (data: ArrayBuffer) => {
+      try {
+        const decoder = new util.TextDecoder('utf-8');
+        const chunk = decoder.decodeToString(new Uint8Array(data));
+        sseBuffer += chunk;
+
+        // 按行解析 SSE 数据
+        const lines = sseBuffer.split('\n');
+        // 保留最后一个不完整的行
+        sseBuffer = lines[lines.length - 1];
+
+        for (let i = 0; i < lines.length - 1; i++) {
+          const line = lines[i].trim();
+          if (line.startsWith('data: ')) {
+            const jsonStr = line.substring(6);
+            if (jsonStr === '[DONE]') {
+              continue;
+            }
+            try {
+              const parsed = JSON.parse(jsonStr) as Record<string, Object>;
+              const choices = parsed['choices'] as Record<string, Object>[];
+              if (choices && choices.length > 0) {
+                const delta = choices[0]['delta'] as Record<string, string>;
+                if (delta && delta['content']) {
+                  onChunk(delta['content']);
+                }
+              }
+            } catch {
+              // 跳过无法解析的行
+            }
+          }
+        }
+      } catch (e) {
+        console.error('AIService', `dataReceive parse error: ${e}`);
+      }
+    });
+
+    // 订阅数据接收完毕
+    httpRequest.on('dataEnd', () => {
+      // 处理 buffer 中剩余数据
+      if (sseBuffer.trim().length > 0) {
+        const remaining = sseBuffer.trim();
+        if (remaining.startsWith('data: ') && remaining.substring(6) !== '[DONE]') {
+          try {
+            const parsed = JSON.parse(remaining.substring(6)) as Record<string, Object>;
+            const choices = parsed['choices'] as Record<string, Object>[];
+            if (choices && choices.length > 0) {
+              const delta = choices[0]['delta'] as Record<string, string>;
+              if (delta && delta['content']) {
+                onChunk(delta['content']);
+              }
+            }
+          } catch {
+            // 忽略
+          }
+        }
+      }
+      onDone();
+      httpRequest.off('dataReceive');
+      httpRequest.off('dataEnd');
+      httpRequest.destroy();
+    });
+
+    try {
+      console.info('AIService', `chatStream: url=${apiUrl}, model=${modelName}`);
+      const responseCode = await httpRequest.requestInStream(
+        apiUrl,
+        {
+          method: http.RequestMethod.POST,
+          header: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`
+          },
+          extraData: JSON.stringify(requestBody),
+          connectTimeout: 15000,
+          readTimeout: 60000
+        }
+      );
+
+      if (responseCode !== 200) {
+        onError(`API 请求失败: HTTP ${responseCode}`);
+        httpRequest.off('dataReceive');
+        httpRequest.off('dataEnd');
+        httpRequest.destroy();
+      }
+    } catch (e) {
+      const msg = AIService.extractErrMsg(e);
+      console.error('AIService', `chatStream request failed: ${msg}`);
+      onError(msg);
+      httpRequest.off('dataReceive');
+      httpRequest.off('dataEnd');
+      httpRequest.destroy();
+    }
+  }
+
+  /**
+   * 通义千问流式 URL（使用 OpenAI 兼容模式）
+   */
+  private resolveQwenStreamUrl(): string {
+    // 通义千问支持 OpenAI 兼容的 /v1/chat/completions 端点
+    return 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
   }
 }

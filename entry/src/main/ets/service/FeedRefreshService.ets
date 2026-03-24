@@ -142,7 +142,7 @@ export class FeedRefreshService {
         content: {
           notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
           normal: {
-            title: 'RSS阅读器',
+            title: 'AIRSS',
             text: `有 ${count} 篇新文章`,
             additionalText: '点击查看'
           }

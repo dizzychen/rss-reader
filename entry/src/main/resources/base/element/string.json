@@ -2,15 +2,15 @@
   "string": [
     {
       "name": "module_desc",
-      "value": "RSS Reader Module"
+      "value": "AIRSS Module"
     },
     {
       "name": "EntryAbility_desc",
-      "value": "RSS Reader"
+      "value": "AIRSS"
     },
     {
       "name": "EntryAbility_label",
-      "value": "RSS阅读器"
+      "value": "AIRSS"
     }
   ]
 }

@@ -33,6 +33,8 @@ export interface Article {
   isStarred: number; // 0=普通, 1=收藏
   coverImage: string;
   cachedAt?: number;
+  recommendScore?: number;   // 推荐评分（0~1）
+  recommendReason?: string;  // 推荐理由标签文本
 }
 
 export interface Tag {

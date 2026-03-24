@@ -1,6 +1,7 @@
 // 通用文章列表项组件
 import { Article } from '../model/Models';
 import { RssService } from '../service/RssService';
+import { Constants } from '../constants/Constants';
 
 @Component
 export struct ArticleItemComponent {
@@ -8,6 +9,7 @@ export struct ArticleItemComponent {
     feedId: 0, guid: '', title: '', summary: '', content: '',
     url: '', author: '', publishedAt: 0, isRead: 0, isStarred: 0, coverImage: ''
   };
+  @Prop recommendReason: string = '';
   onTap: () => void = () => {};
   onStarToggle: () => void = () => {};
 
@@ -42,20 +44,29 @@ export struct ArticleItemComponent {
             .textOverflow({ overflow: TextOverflow.Ellipsis })
         }
 
-        Row() {
+        Row({ space: 6 }) {
           if (this.article.feedTitle) {
             Text(this.article.feedTitle)
               .fontSize(12)
               .fontColor($r('sys.color.ohos_id_color_activated'))
               .maxLines(1)
-              .layoutWeight(1)
+              .constraintSize({ maxWidth: '50%' })
           }
+          // 推荐理由标签
+          if (this.recommendReason) {
+            Text(this.recommendReason)
+              .fontSize(10)
+              .fontColor(Constants.COLOR_PRIMARY)
+              .backgroundColor('#FFF3E0')
+              .borderRadius(4)
+              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
+          }
+          Blank()
           Text(RssService.getInstance().formatDate(this.article.publishedAt))
             .fontSize(12)
             .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
         }
         .width('100%')
-        .justifyContent(FlexAlign.SpaceBetween)
       }
       .layoutWeight(1)
       .alignItems(HorizontalAlign.Start)

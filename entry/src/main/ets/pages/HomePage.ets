@@ -1,10 +1,12 @@
 // 首页：展示所有文章（聚合视图）
-import { router } from '@kit.ArkUI';
 import { Article, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedRefreshService } from '../service/FeedRefreshService';
 import { MemoryService } from '../service/MemoryService';
 import { SettingsService } from '../service/SettingsService';
+import { RecommendService } from '../service/RecommendService';
+import { AIService } from '../service/AIService';
+import { Constants } from '../constants/Constants';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
 
 @Component
@@ -16,14 +18,19 @@ export struct HomePage {
   @State onlyUnread: boolean = true;
   @State isRefreshing: boolean = false;
   @State briefingEnabled: boolean = true;
+  @State sortMode: string = Constants.SORT_MODE_LATEST;
+  @State currentTabIndex: number = 0; // 0: 最新, 1: 推荐
   @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
   private pageOffset: number = 0;
+  private recommendPage: number = 0;
   private pageSize: number = 30;
   private feedMap: Map<number, string> = new Map();
   private exposedArticleIds: Map<number, string> = new Map();
+  private tabController: TabsController = new TabsController();
 
   aboutToAppear() {
     this.loadAISettings();
+    this.loadSortMode();
     this.loadArticles();
   }
 
@@ -35,23 +42,86 @@ export struct HomePage {
     }
   }
 
+  async loadSortMode() {
+    try {
+      const saved = await SettingsService.getInstance().getSortMode();
+      if (saved === Constants.SORT_MODE_RECOMMEND) {
+        this.sortMode = Constants.SORT_MODE_RECOMMEND;
+        this.currentTabIndex = 1;
+      } else {
+        this.currentTabIndex = 0;
+      }
+    } catch (e) {
+      // 使用默认值
+    }
+  }
+
+  async saveSortMode(mode: string) {
+    try {
+      await SettingsService.getInstance().setSortMode(mode);
+    } catch (e) {
+      // 忽略保存错误
+    }
+  }
+
   onRefreshTickChanged() {
-    this.loadArticles(true);
+    // 从详情页返回时，仅增量同步文章状态（已读/收藏），不重新加载列表
+    // 避免"仅未读"模式下已读文章突然消失造成界面抖动
+    this.syncArticleStatus();
+  }
+
+  /**
+   * 增量同步：只更新当前列表中文章的已读/收藏状态，不移除或重排文章
+   */
+  private async syncArticleStatus() {
+    if (this.articles.length === 0) return;
+    try {
+      const ids = this.articles.filter(a => a.id !== undefined).map(a => a.id!);
+      const statusMap = await DatabaseHelper.getInstance().getArticlesStatus(ids);
+      let changed = false;
+      const updated: Article[] = this.articles.map(a => {
+        const status = a.id !== undefined ? statusMap.get(a.id) : undefined;
+        if (status) {
+          const newRead = status['isRead'] ?? a.isRead;
+          const newStarred = status['isStarred'] ?? a.isStarred;
+          if (newRead !== a.isRead || newStarred !== a.isStarred) {
+            changed = true;
+            const copy: Article = {
+              id: a.id, feedId: a.feedId, feedTitle: a.feedTitle,
+              guid: a.guid, title: a.title, summary: a.summary,
+              content: a.content, url: a.url, author: a.author,
+              publishedAt: a.publishedAt, isRead: newRead,
+              isStarred: newStarred, coverImage: a.coverImage, cachedAt: a.cachedAt,
+              recommendScore: a.recommendScore, recommendReason: a.recommendReason
+            };
+            return copy;
+          }
+        }
+        return a;
+      });
+      if (changed) {
+        this.articles = updated;
+      }
+    } catch (e) {
+      console.error('HomePage', `syncArticleStatus failed: ${e}`);
+    }
   }
 
   async loadArticles(reset: boolean = true) {
     if (reset) {
       this.flushSkipBehaviors();
       this.pageOffset = 0;
+      this.recommendPage = 0;
       this.hasMore = true;
       this.isLoading = true;
+      RecommendService.getInstance().clearScoredCache();
     } else {
       if (!this.hasMore || this.isLoadingMore) return;
       this.isLoadingMore = true;
     }
     try {
       const db = DatabaseHelper.getInstance();
-      // reset 时重建 feedMap；追加时仅补充新增 feed
+      // reset 时重建 feedMap
       if (reset) {
         const feeds: Feed[] = await db.getAllFeeds();
         this.feedMap.clear();
@@ -59,10 +129,20 @@ export struct HomePage {
           this.feedMap.set(f.id!, f.title);
         }
       }
-      const items = await db.getAllArticles(this.onlyUnread, this.pageSize, this.pageOffset);
+
+      let items: Article[];
+
+      if (this.sortMode === Constants.SORT_MODE_RECOMMEND) {
+        items = await this.loadRecommendArticles(reset);
+      } else {
+        items = await this.loadLatestArticles(reset);
+      }
+
       // 给每篇文章附加来源名称
       for (const item of items) {
-        item.feedTitle = this.feedMap.get(item.feedId) ?? '';
+        if (!item.feedTitle) {
+          item.feedTitle = this.feedMap.get(item.feedId) ?? '';
+        }
       }
       if (reset) {
         this.articles = items;
@@ -76,13 +156,89 @@ export struct HomePage {
           this.exposedArticleIds.set(item.id, item.feedTitle ?? '');
         }
       }
-      this.pageOffset += items.length;
-      this.hasMore = items.length >= this.pageSize;
+      if (this.sortMode === Constants.SORT_MODE_LATEST) {
+        this.pageOffset += items.length;
+        this.hasMore = items.length >= this.pageSize;
+      }
     } catch (e) {
       console.error('HomePage', `加载失败: ${e}`);
     } finally {
       this.isLoading = false;
       this.isLoadingMore = false;
+    }
+  }
+
+  /**
+   * 最新模式：时间倒序分页
+   */
+  private async loadLatestArticles(reset: boolean): Promise<Article[]> {
+    const db = DatabaseHelper.getInstance();
+    return await db.getAllArticles(this.onlyUnread, this.pageSize, this.pageOffset);
+  }
+
+  /**
+   * 推荐模式：优先使用 AI 排序，无 AI Key 时降级为本地评分
+   */
+  private async loadRecommendArticles(reset: boolean): Promise<Article[]> {
+    const db = DatabaseHelper.getInstance();
+    const recommendSvc = RecommendService.getInstance();
+    const memSvc = MemoryService.getInstance();
+    const aiSvc = AIService.getInstance();
+
+    // 获取待推荐的文章列表
+    const allArticles = await db.getRecentUnreadArticles(
+      Constants.RECOMMEND_RECENT_DAYS, Constants.RECOMMEND_MAX_ARTICLES);
+    for (const a of allArticles) {
+      a.feedTitle = this.feedMap.get(a.feedId) ?? '';
+    }
+
+    // 如果有 AI Key，尝试使用 AI 排序
+    if (aiSvc.hasApiKey() && reset && allArticles.length > 0) {
+      try {
+        // 调用 AI 排序（内部会先检查缓存，若无缓存则请求 AI）
+        const rankedIds = await aiSvc.rankArticles(allArticles);
+
+        if (rankedIds.length > 0) {
+          // AI 排序成功，按返回的 ID 顺序排列
+          const articleMap = new Map<number, Article>();
+          for (const a of allArticles) {
+            if (a.id !== undefined) {
+              articleMap.set(a.id, a);
+            }
+          }
+          const sorted: Article[] = [];
+          for (const id of rankedIds) {
+            const a = articleMap.get(id);
+            if (a) {
+              a.recommendReason = 'AI 推荐';
+              sorted.push(a);
+              articleMap.delete(id);
+            }
+          }
+          // 未在 AI 结果中的文章追加到末尾
+          articleMap.forEach((a) => sorted.push(a));
+          this.hasMore = sorted.length > this.pageSize;
+          return sorted.slice(0, this.pageSize);
+        }
+      } catch (e) {
+        console.warn('HomePage', `AI 排序失败，降级到本地评分: ${e}`);
+        // AI 排序失败，继续使用本地评分
+      }
+    }
+
+    // 无 AI Key 或 AI 排序失败：使用本地评分
+    const page = reset ? 0 : this.recommendPage;
+    if (reset) {
+      const result = await recommendSvc.scoreAndSort(allArticles, this.feedMap, page, this.pageSize);
+      this.recommendPage = 1;
+      this.hasMore = result.totalCount > this.pageSize;
+      return result.articles;
+    } else {
+      // 分页取（从缓存评分结果切片）
+      const result = await recommendSvc.scoreAndSort([], this.feedMap, this.recommendPage, this.pageSize);
+      this.recommendPage++;
+      this.hasMore = result.articles.length >= this.pageSize;
+      return result.articles;
     }
   }
 
@@ -147,7 +303,7 @@ export struct HomePage {
     .width(80)
     .height('100%')
     .justifyContent(FlexAlign.Center)
-    .backgroundColor('#F44336')
+    .backgroundColor(Constants.COLOR_DISLIKE)
     .onClick(() => this.markDislike(article))
   }
 
@@ -155,7 +311,7 @@ export struct HomePage {
     Column() {
       // 顶部导航栏
       Row() {
-        Text('RSS阅读器')
+        Text('AIRSS')
           .fontSize(20)
           .fontWeight(FontWeight.Bold)
           .fontColor($r('sys.color.ohos_id_color_text_primary'))
@@ -186,8 +342,63 @@ export struct HomePage {
       .padding({ left: 16, right: 8 })
       .backgroundColor($r('sys.color.ohos_id_color_background'))
 
-      Divider().color($r('sys.color.ohos_id_color_list_separator'))
+      // Tabs: 最新 / 推荐
+      Tabs({ barPosition: BarPosition.Start, controller: this.tabController, index: this.currentTabIndex }) {
+        TabContent() {
+          this.articleListBuilder()
+        }
+        .tabBar(this.tabBarBuilder('最新', 0))
 
+        TabContent() {
+          this.articleListBuilder()
+        }
+        .tabBar(this.tabBarBuilder('推荐', 1))
+      }
+      .layoutWeight(1)
+      .barMode(BarMode.Fixed)
+      .barWidth('100%')
+      .barHeight(44)
+      .animationDuration(200)
+      .onChange((index: number) => {
+        if (this.currentTabIndex !== index) {
+          this.currentTabIndex = index;
+          this.sortMode = index === 0 ? Constants.SORT_MODE_LATEST : Constants.SORT_MODE_RECOMMEND;
+          this.saveSortMode(this.sortMode);
+          this.loadArticles(true);
+        }
+      })
+    }
+    .width('100%')
+    .height('100%')
+    .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+  }
+
+  @Builder
+  tabBarBuilder(title: string, index: number) {
+    Column() {
+      Text(title)
+        .fontSize(16)
+        .fontWeight(this.currentTabIndex === index ? FontWeight.Bold : FontWeight.Normal)
+        .fontColor(this.currentTabIndex === index ?
+          $r('sys.color.ohos_id_color_text_primary') :
+          $r('sys.color.ohos_id_color_text_secondary'))
+        .margin({ top: 8, bottom: 6 })
+      Divider()
+        .width(24)
+        .strokeWidth(2)
+        .color(this.currentTabIndex === index ?
+          $r('sys.color.ohos_id_color_activated') :
+          Color.Transparent)
+        .borderRadius(1)
+    }
+    .width('100%')
+    .height('100%')
+    .justifyContent(FlexAlign.Center)
+  }
+
+  @Builder
+  articleListBuilder() {
+    Column() {
       // 文章列表
       if (this.isLoading && this.articles.length === 0) {
         Column() {
@@ -215,6 +426,7 @@ export struct HomePage {
               ListItem() {
                 ArticleItemComponent({
                   article: article,
+                  recommendReason: this.sortMode === Constants.SORT_MODE_RECOMMEND ? (article.recommendReason ?? '') : '',
                   onTap: () => {
                     // 从曝光集合中移除（不算 SKIP）
                     if (article.id !== undefined) {
@@ -235,7 +447,8 @@ export struct HomePage {
                         guid: article.guid, title: article.title, summary: article.summary,
                         content: article.content, url: article.url, author: article.author,
                         publishedAt: article.publishedAt, isRead: article.isRead,
-                        isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt
+                        isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt,
+                        recommendScore: article.recommendScore, recommendReason: article.recommendReason
                       };
                       this.articles[idx] = updated;
                       this.articles = [...this.articles];
@@ -250,7 +463,7 @@ export struct HomePage {
                   }
                 }
               })
-            }, (article: Article) => `${article.id}-${article.isStarred}-${article.isRead}`)
+            }, (article: Article) => `${article.id}-${article.isStarred}-${article.isRead}-${article.recommendReason ?? ''}`)
 
             // 加载更多
             ListItem() {
@@ -287,6 +500,5 @@ export struct HomePage {
     }
     .width('100%')
     .height('100%')
-    .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
   }
 }

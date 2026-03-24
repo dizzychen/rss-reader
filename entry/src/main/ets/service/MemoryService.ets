@@ -5,6 +5,7 @@ import { UserBehavior } from '../model/Models';
 import { MemoryFileHelper } from './MemoryFileHelper';
 import { util } from '@kit.ArkTS';
 import { DateUtil } from '../utils/DateUtil';
+import { MarkdownUtil } from '../utils/MarkdownUtil';
 
 // 延迟导入 ProfileService 的回调，由 EntryAbility 注入，避免循环依赖
 let profileRegenerateCallback: (() => Promise<void>) | null = null;
@@ -394,35 +395,7 @@ export class MemoryService {
    * 从 PROFILE.md 中提取 AI 洞察关键段落
    */
   private extractProfileInsights(profile: string): string {
-    if (!profile.trim()) {
-      return '';
-    }
-    const sections = ['## AI 洞察', '## 搜索兴趣'];
-    const parts: string[] = [];
-    for (const header of sections) {
-      const lines = profile.split('\n');
-      let inSection = false;
-      const sectionLines: string[] = [];
-      for (const line of lines) {
-        if (line.startsWith('## ')) {
-          if (inSection) {
-            break;
-          }
-          if (line.startsWith(header)) {
-            inSection = true;
-            sectionLines.push(line);
-            continue;
-          }
-        }
-        if (inSection) {
-          sectionLines.push(line);
-        }
-      }
-      if (sectionLines.length > 0) {
-        parts.push(sectionLines.join('\n').trim());
-      }
-    }
-    return parts.join('\n\n');
+    return MarkdownUtil.extractSections(profile, ['## AI 洞察', '## 搜索兴趣']);
   }
 
   // ===== AI 排序缓存 =====

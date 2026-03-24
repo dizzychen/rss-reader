@@ -103,6 +103,11 @@ struct ArticleDetailPage {
         articleTitle: this.article.title,
         feedTitle: this.feedTitle
       });
+
+      // 有 AI Key 时自动触发 AI 总结
+      if (AIService.getInstance().hasApiKey()) {
+        this.analyzeWithAI();
+      }
     }
   }
 
@@ -210,7 +215,7 @@ struct ArticleDetailPage {
   }
 
   /**
-   * 触发 AI 解读分析
+   * 触发 AI 总结（流式输出）
    */
   private async analyzeWithAI() {
     if (this.isAILoading || !this.article) return;
@@ -224,20 +229,30 @@ struct ArticleDetailPage {
 
     this.isAILoading = true;
     this.showAIPanel = true;
-    this.aiAnalysis = '正在分析中...';
+    this.aiAnalysis = '';
 
-    try {
-      // Article 接口含 feedTitle? 字段，直接赋值后传入，无需展开
-      const art = this.article;
-      art.feedTitle = this.feedTitle;
-      const analysis = await AIService.getInstance().analyzeArticle(art);
-      this.aiAnalysis = analysis ?? '分析失败，请稍后重试。';
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      this.aiAnalysis = `分析失败：${msg}`;
-    } finally {
-      this.isAILoading = false;
-    }
+    const art = this.article;
+    art.feedTitle = this.feedTitle;
+
+    await AIService.getInstance().analyzeArticleStream(
+      art,
+      (chunk: string) => {
+        // 逐块追加文本，实现打字机效果
+        this.aiAnalysis += chunk;
+      },
+      () => {
+        // 流式输出完毕
+        this.isAILoading = false;
+        if (this.aiAnalysis.length === 0) {
+          this.aiAnalysis = '总结失败，请稍后重试。';
+        }
+      },
+      (errMsg: string) => {
+        // 出错
+        this.isAILoading = false;
+        this.aiAnalysis = `总结失败：${errMsg}`;
+      }
+    );
   }
 
   private openInExternalBrowser() {
@@ -311,7 +326,7 @@ struct ArticleDetailPage {
           this.isStarred = !this.isStarred;
         })
 
-        // AI 解读按钮
+        // AI 总结按钮
         Button({ type: ButtonType.Circle }) {
           if (this.isAILoading) {
             LoadingProgress().width(18).height(18)
@@ -472,6 +487,51 @@ struct ArticleDetailPage {
                   .color($r('sys.color.ohos_id_color_list_separator'))
                   .margin({ top: 16, bottom: 16 })
 
+                // AI 总结区域（正文上方）
+                if (this.showAIPanel) {
+                  Column({ space: 8 }) {
+                    Row({ space: 6 }) {
+                      Text('✨')
+                        .fontSize(14)
+                      Text('AI 总结')
+                        .fontSize(14)
+                        .fontWeight(FontWeight.Bold)
+                        .fontColor($r('sys.color.ohos_id_color_activated'))
+                      Blank()
+                      if (this.isAILoading) {
+                        LoadingProgress().width(16).height(16)
+                      }
+                      Button({ type: ButtonType.Circle }) {
+                        SymbolGlyph($r('sys.symbol.xmark'))
+                          .fontSize(14)
+                          .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                      }
+                      .width(24).height(24).backgroundColor(Color.Transparent)
+                      .onClick(() => { this.showAIPanel = false; })
+                    }
+                    .width('100%')
+
+                    if (this.isAILoading && this.aiAnalysis.length === 0) {
+                      // 还未收到任何文字，显示等待提示
+                      Row({ space: 8 }) {
+                        Text('AI 正在总结...').fontSize(13)
+                          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                      }
+                      .width('100%').padding({ top: 4, bottom: 4 })
+                    } else if (this.aiAnalysis.length > 0) {
+                      // 有文字（流式输出中或已完成），用 Markdown 渲染
+                      LvMarkdownIn({
+                        text: this.aiAnalysis
+                      })
+                    }
+                  }
+                  .width('100%')
+                  .padding(12)
+                  .backgroundColor('#F0F5FF')
+                  .borderRadius(12)
+                  .margin({ bottom: 16 })
+                }
+
                 if (this.contentBlocks.length > 0) {
                   ForEach(this.contentBlocks, (block: ContentBlock, index: number) => {
                     if (block.type === 'text') {
@@ -586,50 +646,6 @@ struct ArticleDetailPage {
             .align(Alignment.TopStart)
             .layoutWeight(1)
             .scrollBar(BarState.Auto)
-          }
-
-          // AI 解读面板（底部浮层）
-          if (this.showAIPanel) {
-            Column() {
-              Row() {
-                Text('AI 解读')
-                  .fontSize(14)
-                  .fontWeight(FontWeight.Bold)
-                  .fontColor($r('sys.color.ohos_id_color_text_primary'))
-                  .layoutWeight(1)
-                Button({ type: ButtonType.Circle }) {
-                  SymbolGlyph($r('sys.symbol.xmark'))
-                    .fontSize(16)
-                    .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
-                }
-                .width(28).height(28).backgroundColor(Color.Transparent)
-                .onClick(() => { this.showAIPanel = false; })
-              }
-              .width('100%')
-              .padding({ left: 16, right: 12, top: 12, bottom: 8 })
-
-              Divider().color($r('sys.color.ohos_id_color_list_separator'))
-
-              if (this.isAILoading) {
-                Row({ space: 8 }) {
-                  LoadingProgress().width(20).height(20)
-                  Text('AI 正在分析...').fontSize(13)
-                    .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-                }
-                .width('100%').padding(16).justifyContent(FlexAlign.Center)
-              } else {
-                Scroll() {
-                  LvMarkdownIn({
-                    text: this.aiAnalysis
-                  })
-                }
-                .constraintSize({ maxHeight: 300 })
-                .scrollBar(BarState.Auto)
-              }
-            }
-            .width('100%')
-            .backgroundColor($r('sys.color.ohos_id_color_background'))
-            .shadow({ radius: 8, color: '#20000000', offsetY: -4 })
           }
         }
         .layoutWeight(1)

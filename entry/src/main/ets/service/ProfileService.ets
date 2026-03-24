@@ -5,6 +5,7 @@ import { MemoryService } from './MemoryService';
 import { AIService } from './AIService';
 import { InterestCalculator } from '../utils/InterestCalculator';
 import { DateUtil } from '../utils/DateUtil';
+import { MarkdownUtil } from '../utils/MarkdownUtil';
 import { Constants } from '../constants/Constants';
 
 /** aggregateStats 返回类型 */
@@ -528,35 +529,11 @@ topics 提取 5-8 个话题关键词，weight 范围 0-1。`;
    * 从已有画像内容中解析兴趣权重
    */
   private parseExistingWeights(content: string): InterestWeight[] {
-    const feedSection = this.extractSection(content, '## 订阅源偏好');
+    const feedSection = MarkdownUtil.extractSection(content, '## 订阅源偏好');
     if (!feedSection) {
       return [];
     }
     return InterestCalculator.parseFromMarkdown(feedSection);
-  }
-
-  /**
-   * 提取 Markdown 中某个 ## 章节的内容
-   */
-  private extractSection(content: string, header: string): string {
-    const lines = content.split('\n');
-    let inSection = false;
-    const sectionLines: string[] = [];
-    for (const line of lines) {
-      if (line.startsWith('## ')) {
-        if (inSection) {
-          break;
-        }
-        if (line.startsWith(header)) {
-          inSection = true;
-          continue;
-        }
-      }
-      if (inSection) {
-        sectionLines.push(line);
-      }
-    }
-    return sectionLines.join('\n');
   }
 
   /**

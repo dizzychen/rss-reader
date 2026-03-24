@@ -1,6 +1,6 @@
 /**
- * Markdown 转可读纯文本工具
- * 用于将 AI 输出的 Markdown 格式转换为适合 Text 组件渲染的纯文本
+ * Markdown 工具类
+ * 用于 Markdown 格式解析、转换和章节提取
  */
 export class MarkdownUtil {
   /**
@@ -36,5 +36,53 @@ export class MarkdownUtil {
       // 合并连续空行（>2行 → 2行）
       .replace(/\n{3,}/g, '\n\n')
       .trim();
+  }
+
+  /**
+   * 提取 Markdown 中某个 ## 章节的内容
+   * @param content Markdown 全文
+   * @param header 章节标题（如 "## 订阅源偏好"）
+   * @returns 章节内容（不含标题行），如果未找到返回空字符串
+   */
+  static extractSection(content: string, header: string): string {
+    const lines = content.split('\n');
+    let inSection = false;
+    const sectionLines: string[] = [];
+    for (const line of lines) {
+      if (line.startsWith('## ')) {
+        if (inSection) {
+          break;
+        }
+        if (line.startsWith(header)) {
+          inSection = true;
+          continue;
+        }
+      }
+      if (inSection) {
+        sectionLines.push(line);
+      }
+    }
+    return sectionLines.join('\n');
+  }
+
+  /**
+   * 从 Markdown 中提取多个章节
+   * @param content Markdown 全文
+   * @param headers 章节标题数组
+   * @returns 各章节内容的拼接
+   */
+  static extractSections(content: string, headers: string[]): string {
+    if (!content.trim()) {
+      return '';
+    }
+    const parts: string[] = [];
+    for (const header of headers) {
+      const section = MarkdownUtil.extractSection(content, header);
+      if (section.trim()) {
+        // 含标题一起输出
+        parts.push(`${header}\n${section.trim()}`);
+      }
+    }
+    return parts.join('\n\n');
   }
 }

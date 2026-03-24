@@ -63,6 +63,18 @@ export class SettingsService {
     await this.prefs.flush();
   }
 
+  // ===== 排序模式 =====
+
+  async getSortMode(): Promise<string> {
+    if (!this.prefs) return 'latest';
+    const v = await this.prefs.get(Constants.PREF_SORT_MODE, 'latest');
+    return typeof v === 'string' ? v : 'latest';
+  }
+
+  async setSortMode(mode: string): Promise<void> {
+    await this.setSetting(Constants.PREF_SORT_MODE, mode);
+  }
+
   // ===== AI 相关设置 =====
 
   async getAIApiKey(): Promise<string> {

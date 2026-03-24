@@ -1,6 +1,27 @@
 // 应用全局常量
 
 export class Constants {
+  // ===== 主题颜色 =====
+  // 主色调（用于高亮、强调）
+  static readonly COLOR_PRIMARY: string = '#FF6D00';           // 橙色主色
+  static readonly COLOR_PRIMARY_LIGHT: string = '#FF9E40';     // 橙色浅色
+  static readonly COLOR_PRIMARY_DARK: string = '#C43E00';      // 橙色深色
+
+  // 语义颜色
+  static readonly COLOR_SUCCESS: string = '#4CAF50';           // 成功/完成
+  static readonly COLOR_WARNING: string = '#FFA726';           // 警告
+  static readonly COLOR_ERROR: string = '#F44336';             // 错误
+  static readonly COLOR_INFO: string = '#2196F3';              // 信息
+
+  // 推荐/评分相关
+  static readonly COLOR_RECOMMEND_HIGH: string = '#4CAF50';    // 高推荐度
+  static readonly COLOR_RECOMMEND_MEDIUM: string = '#FF9800';  // 中推荐度
+  static readonly COLOR_RECOMMEND_LOW: string = '#9E9E9E';     // 低推荐度
+
+  // 反馈颜色
+  static readonly COLOR_LIKE: string = '#4CAF50';              // 点赞/喜欢
+  static readonly COLOR_DISLIKE: string = '#F44336';           // 踩/不喜欢
+
   // 数据库
   static readonly DB_NAME: string = 'rss_reader.db';
   static readonly DB_VERSION: number = 1;
@@ -81,6 +102,30 @@ export class Constants {
   // 通义千问 API
   static readonly QWEN_API_URL: string = 'https://dashscope.aliyuncs.com/compatible-mode/v1/chat/completions';
   static readonly QWEN_MODEL: string = 'qwen-plus';
+
+  // ===== 推荐排序 =====
+
+  // 排序模式 Preferences 键名
+  static readonly PREF_SORT_MODE: string = 'sort_mode';
+
+  // 排序模式值
+  static readonly SORT_MODE_LATEST: string = 'latest';
+  static readonly SORT_MODE_RECOMMEND: string = 'recommend';
+
+  // 推荐评分权重
+  static readonly W_FEED: number = 0.45;         // 订阅源匹配权重
+  static readonly W_FRESHNESS: number = 0.25;    // 时效性权重
+  static readonly W_TOPIC: number = 0.15;        // 话题匹配权重
+
+  // 推荐参数
+  static readonly RECOMMEND_CACHE_TTL: number = 1800000;   // 画像缓存过期时间（30分钟，ms）
+  static readonly RECOMMEND_RECENT_DAYS: number = 7;       // 推荐取文天数
+  static readonly RECOMMEND_MAX_ARTICLES: number = 200;    // 推荐最大取文数
+  static readonly RECOMMEND_PAGE_SIZE: number = 30;        // 推荐每页条数
+
+  // 来源多样性惩罚系数
+  static readonly DIVERSITY_PENALTY_2ND: number = 0.8;     // 连续同源第 2 篇
+  static readonly DIVERSITY_PENALTY_3RD: number = 0.6;     // 连续同源第 3 篇及之后
 
   // AI 画像综合
   static readonly AI_PROFILE_MAX_TOKENS: number = 800;
