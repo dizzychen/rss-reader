@@ -35,6 +35,7 @@ export interface Article {
   cachedAt?: number;
   recommendScore?: number;   // 推荐评分（0~1）
   recommendReason?: string;  // 推荐理由标签文本
+  aiSummary?: string;        // AI 总结缓存
 }
 
 export interface Tag {

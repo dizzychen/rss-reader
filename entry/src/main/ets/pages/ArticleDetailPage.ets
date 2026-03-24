@@ -104,9 +104,16 @@ struct ArticleDetailPage {
         feedTitle: this.feedTitle
       });
 
-      // 有 AI Key 时自动触发 AI 总结
+      // 有 AI Key 时自动触发 AI 总结（优先使用缓存）
       if (AIService.getInstance().hasApiKey()) {
-        this.analyzeWithAI();
+        if (this.article.aiSummary && this.article.aiSummary.length > 0) {
+          // 有缓存，直接展示
+          this.aiAnalysis = this.article.aiSummary;
+          this.showAIPanel = true;
+        } else {
+          // 无缓存，调用 AI 生成
+          this.analyzeWithAI();
+        }
       }
     }
   }
@@ -241,10 +248,13 @@ struct ArticleDetailPage {
         this.aiAnalysis += chunk;
       },
       () => {
-        // 流式输出完毕
+        // 流式输出完毕，保存到数据库缓存
         this.isAILoading = false;
         if (this.aiAnalysis.length === 0) {
           this.aiAnalysis = '总结失败，请稍后重试。';
+        } else if (this.articleId > 0) {
+          // 缓存成功的 AI 总结
+          DatabaseHelper.getInstance().saveAISummary(this.articleId, this.aiAnalysis);
         }
       },
       (errMsg: string) => {

@@ -45,6 +45,7 @@ const SQL_CREATE_ARTICLES = `
     is_starred INTEGER DEFAULT 0,
     cover_image TEXT DEFAULT '',
     cached_at INTEGER DEFAULT 0,
+    ai_summary TEXT DEFAULT '',
     UNIQUE(feed_id, guid)
   )`;
 
@@ -92,6 +93,13 @@ export class DatabaseHelper {
       await this.rdbStore.executeSql(SQL_CREATE_ARTICLES);
       await this.rdbStore.executeSql(SQL_CREATE_TAGS);
       await this.rdbStore.executeSql(SQL_CREATE_ARTICLE_TAGS);
+      // 数据库升级：为已有表添加 ai_summary 列（若不存在则添加）
+      try {
+        await this.rdbStore.executeSql(
+          `ALTER TABLE ${Constants.TABLE_ARTICLES} ADD COLUMN ai_summary TEXT DEFAULT ''`);
+      } catch {
+        // 列已存在则忽略
+      }
     } catch (e) {
       // Previewer 环境下 RDB 不可用，静默忽略（rdbStore 保持 null）
       const msg = e instanceof Error ? e.message : String(e);
@@ -405,6 +413,16 @@ export class DatabaseHelper {
     await this.rdbStore.update({ is_read: isRead }, pred);
   }
 
+  /**
+   * 保存文章的 AI 总结到数据库
+   */
+  async saveAISummary(articleId: number, summary: string): Promise<void> {
+    if (!this.rdbStore) return;
+    const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+    pred.equalTo('id', articleId);
+    await this.rdbStore.update({ ai_summary: summary }, pred);
+  }
+
   async markAllReadByFeed(feedId: number): Promise<void> {
     if (!this.rdbStore) return;
     const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
@@ -450,7 +468,7 @@ export class DatabaseHelper {
   private async queryArticles(predicates: relationalStore.RdbPredicates): Promise<Article[]> {
     if (!this.rdbStore) return [];
     const columns = ['id', 'feed_id', 'guid', 'title', 'summary', 'content', 'url',
-      'author', 'published_at', 'is_read', 'is_starred', 'cover_image', 'cached_at'];
+      'author', 'published_at', 'is_read', 'is_starred', 'cover_image', 'cached_at', 'ai_summary'];
     const result = await this.rdbStore.query(predicates, columns);
     const articles: Article[] = [];
     try {
@@ -468,7 +486,8 @@ export class DatabaseHelper {
           isRead: result.getLong(result.getColumnIndex('is_read')),
           isStarred: result.getLong(result.getColumnIndex('is_starred')),
           coverImage: result.getString(result.getColumnIndex('cover_image')),
-          cachedAt: result.getLong(result.getColumnIndex('cached_at'))
+          cachedAt: result.getLong(result.getColumnIndex('cached_at')),
+          aiSummary: result.getString(result.getColumnIndex('ai_summary'))
         });
       }
     } finally {

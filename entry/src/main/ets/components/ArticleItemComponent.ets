@@ -14,78 +14,86 @@ export struct ArticleItemComponent {
   onStarToggle: () => void = () => {};
 
   build() {
-    Row({ space: 12 }) {
-      // 封面图
-      if (this.article.coverImage) {
-        Image(this.article.coverImage)
-          .width(80)
-          .height(80)
-          .borderRadius(8)
-          .objectFit(ImageFit.Cover)
-      }
+    Stack({ alignContent: Alignment.TopStart }) {
+      // 主内容区
+      Row({ space: 12 }) {
+        // 封面图
+        if (this.article.coverImage) {
+          Image(this.article.coverImage)
+            .width(80)
+            .height(80)
+            .borderRadius(8)
+            .objectFit(ImageFit.Cover)
+            .opacity(this.article.isRead === 1 ? 0.5 : 1)
+        }
 
-      // 文章信息
-      Column({ space: 6 }) {
-        Text(this.article.title)
-          .fontSize(15)
-          .fontWeight(FontWeight.Medium)
-          .fontColor(this.article.isRead === 1
-            ? $r('sys.color.ohos_id_color_text_secondary')
-            : $r('sys.color.ohos_id_color_text_primary'))
-          .maxLines(2)
-          .textOverflow({ overflow: TextOverflow.Ellipsis })
-          .lineHeight(20)
-
-        if (this.article.summary) {
-          Text(this.article.summary)
-            .fontSize(13)
-            .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+        // 文章信息
+        Column({ space: 6 }) {
+          Text(this.article.title)
+            .fontSize(15)
+            .fontWeight(this.article.isRead === 1 ? FontWeight.Normal : FontWeight.Medium)
+            .fontColor(this.article.isRead === 1
+              ? $r('sys.color.ohos_id_color_text_tertiary')
+              : $r('sys.color.ohos_id_color_text_primary'))
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
-        }
+            .lineHeight(20)
 
-        Row({ space: 6 }) {
-          if (this.article.feedTitle) {
-            Text(this.article.feedTitle)
+          if (this.article.summary) {
+            Text(this.article.summary)
+              .fontSize(13)
+              .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+              .maxLines(2)
+              .textOverflow({ overflow: TextOverflow.Ellipsis })
+              .opacity(this.article.isRead === 1 ? 0.6 : 1)
+          }
+
+          Row({ space: 6 }) {
+            if (this.article.feedTitle) {
+              Text(this.article.feedTitle)
+                .fontSize(12)
+                .fontColor($r('sys.color.ohos_id_color_activated'))
+                .maxLines(1)
+                .constraintSize({ maxWidth: '50%' })
+                .opacity(this.article.isRead === 1 ? 0.6 : 1)
+            }
+            Blank()
+            Text(RssService.getInstance().formatDate(this.article.publishedAt))
               .fontSize(12)
-              .fontColor($r('sys.color.ohos_id_color_activated'))
-              .maxLines(1)
-              .constraintSize({ maxWidth: '50%' })
+              .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
           }
-          // 推荐理由标签
-          if (this.recommendReason) {
-            Text(this.recommendReason)
-              .fontSize(10)
-              .fontColor(Constants.COLOR_PRIMARY)
-              .backgroundColor('#FFF3E0')
-              .borderRadius(4)
-              .padding({ left: 6, right: 6, top: 2, bottom: 2 })
-          }
-          Blank()
-          Text(RssService.getInstance().formatDate(this.article.publishedAt))
-            .fontSize(12)
-            .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+          .width('100%')
         }
-        .width('100%')
-      }
-      .layoutWeight(1)
-      .alignItems(HorizontalAlign.Start)
+        .layoutWeight(1)
+        .alignItems(HorizontalAlign.Start)
 
-      // 收藏按钮
-      Button({ type: ButtonType.Circle }) {
-        SymbolGlyph($r(this.article.isStarred === 1 ? 'sys.symbol.star_fill' : 'sys.symbol.star'))
-          .fontSize(18)
-          .fontColor([this.article.isStarred === 1 ? Color.Orange : $r('sys.color.ohos_id_color_text_secondary')])
+        // 收藏按钮
+        Button({ type: ButtonType.Circle }) {
+          SymbolGlyph($r(this.article.isStarred === 1 ? 'sys.symbol.star_fill' : 'sys.symbol.star'))
+            .fontSize(18)
+            .fontColor([this.article.isStarred === 1 ? Color.Orange : $r('sys.color.ohos_id_color_text_secondary')])
+        }
+        .width(32)
+        .height(32)
+        .backgroundColor(Color.Transparent)
+        .onClick(() => {
+          this.onStarToggle();
+        })
       }
-      .width(32)
-      .height(32)
-      .backgroundColor(Color.Transparent)
-      .onClick(() => {
-        this.onStarToggle();
-      })
+      .width('100%')
+      .padding(16)
+
+      // 推荐理由角标（绝对定位，不影响布局流）
+      if (this.recommendReason) {
+        Text(this.recommendReason)
+          .fontSize(9)
+          .fontColor(Color.White)
+          .backgroundColor(Constants.COLOR_PRIMARY)
+          .borderRadius({ topLeft: 0, bottomRight: 8 })
+          .padding({ left: 6, right: 6, top: 3, bottom: 3 })
+      }
     }
     .width('100%')
-    .padding(16)
     .backgroundColor($r('sys.color.ohos_id_color_background'))
     .onClick(() => this.onTap())
   }

@@ -11,7 +11,8 @@ import { ArticleItemComponent } from '../components/ArticleItemComponent';
 
 @Component
 export struct HomePage {
-  @State articles: Article[] = [];
+  @State latestArticles: Article[] = [];
+  @State recommendArticles: Article[] = [];
   @State isLoading: boolean = false;
   @State isLoadingMore: boolean = false;
   @State hasMore: boolean = true;
@@ -27,6 +28,20 @@ export struct HomePage {
   private feedMap: Map<number, string> = new Map();
   private exposedArticleIds: Map<number, string> = new Map();
   private tabController: TabsController = new TabsController();
+
+  /** 获取当前 Tab 对应的文章列表 */
+  private getCurrentArticles(): Article[] {
+    return this.sortMode === Constants.SORT_MODE_RECOMMEND ? this.recommendArticles : this.latestArticles;
+  }
+
+  /** 设置当前 Tab 对应的文章列表 */
+  private setCurrentArticles(items: Article[]) {
+    if (this.sortMode === Constants.SORT_MODE_RECOMMEND) {
+      this.recommendArticles = items;
+    } else {
+      this.latestArticles = items;
+    }
+  }
 
   aboutToAppear() {
     this.loadAISettings();
@@ -74,12 +89,13 @@ export struct HomePage {
    * 增量同步：只更新当前列表中文章的已读/收藏状态，不移除或重排文章
    */
   private async syncArticleStatus() {
-    if (this.articles.length === 0) return;
+    const articles = this.getCurrentArticles();
+    if (articles.length === 0) return;
     try {
-      const ids = this.articles.filter(a => a.id !== undefined).map(a => a.id!);
+      const ids = articles.filter(a => a.id !== undefined).map(a => a.id!);
       const statusMap = await DatabaseHelper.getInstance().getArticlesStatus(ids);
       let changed = false;
-      const updated: Article[] = this.articles.map(a => {
+      const updated: Article[] = articles.map(a => {
         const status = a.id !== undefined ? statusMap.get(a.id) : undefined;
         if (status) {
           const newRead = status['isRead'] ?? a.isRead;
@@ -100,7 +116,7 @@ export struct HomePage {
         return a;
       });
       if (changed) {
-        this.articles = updated;
+        this.setCurrentArticles(updated);
       }
     } catch (e) {
       console.error('HomePage', `syncArticleStatus failed: ${e}`);
@@ -108,12 +124,16 @@ export struct HomePage {
   }
 
   async loadArticles(reset: boolean = true) {
+    const articles = this.getCurrentArticles();
     if (reset) {
       this.flushSkipBehaviors();
       this.pageOffset = 0;
       this.recommendPage = 0;
       this.hasMore = true;
-      this.isLoading = true;
+      // 仅在列表为空时显示全屏 Loading，否则保持当前列表不动
+      if (articles.length === 0) {
+        this.isLoading = true;
+      }
       RecommendService.getInstance().clearScoredCache();
     } else {
       if (!this.hasMore || this.isLoadingMore) return;
@@ -145,10 +165,10 @@ export struct HomePage {
         }
       }
       if (reset) {
-        this.articles = items;
+        this.setCurrentArticles(items);
         this.exposedArticleIds.clear();
       } else {
-        this.articles = this.articles.concat(items);
+        this.setCurrentArticles(this.getCurrentArticles().concat(items));
       }
       // 记录曝光的文章 ID
       for (const item of items) {
@@ -285,10 +305,12 @@ export struct HomePage {
       feedTitle: article.feedTitle,
       score: -1
     });
-    const idx = this.articles.findIndex(a => a.id === article.id);
+    const articles = this.getCurrentArticles();
+    const idx = articles.findIndex(a => a.id === article.id);
     if (idx >= 0) {
-      this.articles.splice(idx, 1);
-      this.articles = [...this.articles];
+      const copy = [...articles];
+      copy.splice(idx, 1);
+      this.setCurrentArticles(copy);
     }
     this.exposedArticleIds.delete(article.id!);
   }
@@ -345,12 +367,12 @@ export struct HomePage {
       // Tabs: 最新 / 推荐
       Tabs({ barPosition: BarPosition.Start, controller: this.tabController, index: this.currentTabIndex }) {
         TabContent() {
-          this.articleListBuilder()
+          this.latestListBuilder()
         }
         .tabBar(this.tabBarBuilder('最新', 0))
 
         TabContent() {
-          this.articleListBuilder()
+          this.recommendListBuilder()
         }
         .tabBar(this.tabBarBuilder('推荐', 1))
       }
@@ -397,10 +419,9 @@ export struct HomePage {
   }
 
   @Builder
-  articleListBuilder() {
+  latestListBuilder() {
     Column() {
-      // 文章列表
-      if (this.isLoading && this.articles.length === 0) {
+      if (this.isLoading && this.latestArticles.length === 0) {
         Column() {
           LoadingProgress()
             .width(40)
@@ -411,7 +432,7 @@ export struct HomePage {
         .width('100%')
         .layoutWeight(1)
         .justifyContent(FlexAlign.Center)
-      } else if (this.articles.length === 0) {
+      } else if (this.latestArticles.length === 0) {
         Column({ space: 16 }) {
           Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
           Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
@@ -422,13 +443,12 @@ export struct HomePage {
       } else {
         Refresh({ refreshing: $$this.isRefreshing }) {
           List() {
-            ForEach(this.articles, (article: Article) => {
+            ForEach(this.latestArticles, (article: Article) => {
               ListItem() {
                 ArticleItemComponent({
                   article: article,
-                  recommendReason: this.sortMode === Constants.SORT_MODE_RECOMMEND ? (article.recommendReason ?? '') : '',
+                  recommendReason: '',
                   onTap: () => {
-                    // 从曝光集合中移除（不算 SKIP）
                     if (article.id !== undefined) {
                       this.exposedArticleIds.delete(article.id);
                     }
@@ -440,7 +460,7 @@ export struct HomePage {
                   onStarToggle: async () => {
                     const newStar = article.isStarred === 1 ? 0 : 1;
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
-                    const idx = this.articles.findIndex(a => a.id === article.id);
+                    const idx = this.latestArticles.findIndex(a => a.id === article.id);
                     if (idx >= 0) {
                       const updated: Article = {
                         id: article.id, feedId: article.feedId, feedTitle: article.feedTitle,
@@ -450,8 +470,8 @@ export struct HomePage {
                         isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt,
                         recommendScore: article.recommendScore, recommendReason: article.recommendReason
                       };
-                      this.articles[idx] = updated;
-                      this.articles = [...this.articles];
+                      this.latestArticles[idx] = updated;
+                      this.latestArticles = [...this.latestArticles];
                     }
                   }
                 })
@@ -463,9 +483,111 @@ export struct HomePage {
                   }
                 }
               })
-            }, (article: Article) => `${article.id}-${article.isStarred}-${article.isRead}-${article.recommendReason ?? ''}`)
+            }, (article: Article) => `${article.id}-${article.isStarred}-${article.isRead}`)
 
-            // 加载更多
+            ListItem() {
+              Row() {
+                if (this.isLoadingMore) {
+                  LoadingProgress()
+                    .width(24)
+                    .height(24)
+                    .backgroundColor(Color.Transparent)
+                } else if (this.hasMore) {
+                  Button('加载更多')
+                    .fontSize(14)
+                    .fontColor($r('sys.color.ohos_id_color_activated'))
+                    .backgroundColor(Color.Transparent)
+                    .onClick(() => this.loadArticles(false))
+                } else {
+                  Text('已加载全部文章')
+                    .fontSize(13)
+                    .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+                }
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding(16)
+            }
+          }
+          .width('100%')
+          .layoutWeight(1)
+          .divider({ strokeWidth: 0.5, color: $r('sys.color.ohos_id_color_list_separator') })
+        }
+        .onRefreshing(() => this.doRefresh())
+        .layoutWeight(1)
+      }
+    }
+    .width('100%')
+    .height('100%')
+  }
+
+  @Builder
+  recommendListBuilder() {
+    Column() {
+      if (this.isLoading && this.recommendArticles.length === 0) {
+        Column() {
+          LoadingProgress()
+            .width(40)
+            .height(40)
+            .backgroundColor(Color.Transparent)
+          Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else if (this.recommendArticles.length === 0) {
+        Column({ space: 16 }) {
+          Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else {
+        Refresh({ refreshing: $$this.isRefreshing }) {
+          List() {
+            ForEach(this.recommendArticles, (article: Article) => {
+              ListItem() {
+                ArticleItemComponent({
+                  article: article,
+                  recommendReason: article.recommendReason ?? '',
+                  onTap: () => {
+                    if (article.id !== undefined) {
+                      this.exposedArticleIds.delete(article.id);
+                    }
+                    this.getUIContext().getRouter().pushUrl({
+                      url: 'pages/ArticleDetailPage',
+                      params: { articleId: article.id }
+                    });
+                  },
+                  onStarToggle: async () => {
+                    const newStar = article.isStarred === 1 ? 0 : 1;
+                    await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
+                    const idx = this.recommendArticles.findIndex(a => a.id === article.id);
+                    if (idx >= 0) {
+                      const updated: Article = {
+                        id: article.id, feedId: article.feedId, feedTitle: article.feedTitle,
+                        guid: article.guid, title: article.title, summary: article.summary,
+                        content: article.content, url: article.url, author: article.author,
+                        publishedAt: article.publishedAt, isRead: article.isRead,
+                        isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt,
+                        recommendScore: article.recommendScore, recommendReason: article.recommendReason
+                      };
+                      this.recommendArticles[idx] = updated;
+                      this.recommendArticles = [...this.recommendArticles];
+                    }
+                  }
+                })
+              }
+              .swipeAction({
+                end: {
+                  builder: () => {
+                    this.swipeDislikeBuilder(article)
+                  }
+                }
+              })
+            }, (article: Article) => `${article.id}-${article.isStarred}-${article.isRead}`)
+
             ListItem() {
               Row() {
                 if (this.isLoadingMore) {
