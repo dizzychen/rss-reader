@@ -34,10 +34,70 @@ function detectFeedType(xmlContent: string): string {
   return 'unknown';
 }
 
-// 复现 extractFirstImage 逻辑
+// 复现 isImageUrl 逻辑（增强版）
+function isImageUrl(url: string): boolean {
+  const lower = url.toLowerCase().split('?')[0].split('#')[0];
+  const lastSegment = lower.split('/').pop() || '';
+  return lastSegment.endsWith('.jpg') || lastSegment.endsWith('.jpeg') || lastSegment.endsWith('.png') ||
+    lastSegment.endsWith('.gif') || lastSegment.endsWith('.webp') || lastSegment.endsWith('.svg') ||
+    lastSegment.endsWith('.bmp') || lastSegment.endsWith('.ico') ||
+    lower.includes('/img/') || lower.includes('/image/') || lower.includes('/photo/') ||
+    lower.includes('.img.') || lower.includes('imageview') ||
+    lower.includes('img.') || lower.includes('pic.') || lower.includes('photo.') ||
+    lower.includes('image.') || lower.includes('cdn.');
+}
+
+// 复现 extractFirstImage 逻辑（增强版：支持懒加载属性、视频封面、srcset）
 function extractFirstImage(html: string): string {
-  const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-  return match ? match[1] : '';
+  const srcMatch = html.match(/<img[^>]+src\s*=\s*["']([^"']+)["']/i);
+  if (srcMatch) {
+    return srcMatch[1];
+  }
+  const lazySrcMatch = html.match(/<img[^>]+(?:data-src|data-original|data-lazy-src)\s*=\s*["']([^"']+)["']/i);
+  if (lazySrcMatch) {
+    return lazySrcMatch[1];
+  }
+  const posterMatch = html.match(/<video[^>]+poster\s*=\s*["']([^"']+)["']/i);
+  if (posterMatch) {
+    return posterMatch[1];
+  }
+  const srcsetMatch = html.match(/<source[^>]+srcset\s*=\s*["']([^\s"',]+)/i);
+  if (srcsetMatch) {
+    return srcsetMatch[1];
+  }
+  return '';
+}
+
+// 复现 extractMediaImage 逻辑
+function extractMediaImage(xml: string): string {
+  const mediaContentPattern = /<media:content\s([^>]*?)(?:\/>|>[\s\S]*?<\/media:content>)/gi;
+  let mediaMatch = mediaContentPattern.exec(xml);
+  while (mediaMatch !== null) {
+    const attrs = mediaMatch[1];
+    const urlMatch = attrs.match(/url\s*=\s*["']([^"']+)["']/i);
+    if (urlMatch) {
+      const url = urlMatch[1];
+      const mediumMatch = attrs.match(/medium\s*=\s*["']([^"']+)["']/i);
+      const typeMatch = attrs.match(/type\s*=\s*["']([^"']+)["']/i);
+      const isImage = (mediumMatch && mediumMatch[1].toLowerCase() === 'image') ||
+        (typeMatch && typeMatch[1].toLowerCase().startsWith('image/')) ||
+        isImageUrl(url);
+      if (isImage) {
+        return url;
+      }
+    }
+    mediaMatch = mediaContentPattern.exec(xml);
+  }
+  const thumbnailPattern = /<media:thumbnail\s([^>]*?)(?:\/>|>[\s\S]*?<\/media:thumbnail>)/gi;
+  const thumbMatch = thumbnailPattern.exec(xml);
+  if (thumbMatch) {
+    const attrs = thumbMatch[1];
+    const urlMatch = attrs.match(/url\s*=\s*["']([^"']+)["']/i);
+    if (urlMatch) {
+      return urlMatch[1];
+    }
+  }
+  return '';
 }
 
 // 复现 formatDate 逻辑
@@ -215,6 +275,104 @@ export default function RssUtilsTest() {
       it('should_be_case_insensitive_for_img_tag', 0, () => {
         const html = '<IMG src="https://example.com/d.jpg">';
         expect(extractFirstImage(html)).assertEqual('https://example.com/d.jpg');
+      });
+
+      it('should_extract_data_src_when_no_src', 0, () => {
+        const html = '<img data-src="https://cdn.example.com/lazy.jpg" class="lazyload">';
+        expect(extractFirstImage(html)).assertEqual('https://cdn.example.com/lazy.jpg');
+      });
+
+      it('should_extract_data_original_when_no_src', 0, () => {
+        const html = '<img data-original="https://cdn.example.com/original.png">';
+        expect(extractFirstImage(html)).assertEqual('https://cdn.example.com/original.png');
+      });
+
+      it('should_extract_data_lazy_src_when_no_src', 0, () => {
+        const html = '<img data-lazy-src="https://cdn.example.com/lazy2.webp">';
+        expect(extractFirstImage(html)).assertEqual('https://cdn.example.com/lazy2.webp');
+      });
+
+      it('should_prefer_src_over_data_src', 0, () => {
+        const html = '<img src="https://example.com/real.jpg" data-src="https://example.com/lazy.jpg">';
+        expect(extractFirstImage(html)).assertEqual('https://example.com/real.jpg');
+      });
+
+      it('should_extract_video_poster', 0, () => {
+        const html = '<video poster="https://example.com/poster.jpg" controls></video>';
+        expect(extractFirstImage(html)).assertEqual('https://example.com/poster.jpg');
+      });
+
+      it('should_extract_source_srcset', 0, () => {
+        const html = '<picture><source srcset="https://example.com/pic.webp 1x, https://example.com/pic2x.webp 2x"></picture>';
+        expect(extractFirstImage(html)).assertEqual('https://example.com/pic.webp');
+      });
+    });
+
+    // ==================== extractMediaImage 测试 ====================
+
+    describe('extractMediaImage', () => {
+      it('should_extract_media_content_with_medium_image', 0, () => {
+        const xml = '<item><media:content url="https://cdn.example.com/img123" medium="image" /></item>';
+        expect(extractMediaImage(xml)).assertEqual('https://cdn.example.com/img123');
+      });
+
+      it('should_extract_media_content_with_type_image', 0, () => {
+        const xml = '<item><media:content url="https://cdn.example.com/photo" type="image/jpeg" /></item>';
+        expect(extractMediaImage(xml)).assertEqual('https://cdn.example.com/photo');
+      });
+
+      it('should_extract_media_content_with_image_extension', 0, () => {
+        const xml = '<item><media:content url="https://example.com/cover.jpg" /></item>';
+        expect(extractMediaImage(xml)).assertEqual('https://example.com/cover.jpg');
+      });
+
+      it('should_extract_media_thumbnail', 0, () => {
+        const xml = '<item><media:thumbnail url="https://example.com/thumb.png" /></item>';
+        expect(extractMediaImage(xml)).assertEqual('https://example.com/thumb.png');
+      });
+
+      it('should_prefer_media_content_over_thumbnail', 0, () => {
+        const xml = '<item><media:content url="https://example.com/full.jpg" medium="image" /><media:thumbnail url="https://example.com/thumb.png" /></item>';
+        expect(extractMediaImage(xml)).assertEqual('https://example.com/full.jpg');
+      });
+
+      it('should_skip_non_image_media_content', 0, () => {
+        const xml = '<item><media:content url="https://example.com/video.mp4" medium="video" type="video/mp4" /><media:thumbnail url="https://example.com/thumb.jpg" /></item>';
+        expect(extractMediaImage(xml)).assertEqual('https://example.com/thumb.jpg');
+      });
+
+      it('should_return_empty_for_no_media_tags', 0, () => {
+        const xml = '<item><title>Test</title></item>';
+        expect(extractMediaImage(xml)).assertEqual('');
+      });
+
+      it('should_handle_non_self_closing_media_content', 0, () => {
+        const xml = '<item><media:content url="https://example.com/pic.jpg" medium="image">some text</media:content></item>';
+        expect(extractMediaImage(xml)).assertEqual('https://example.com/pic.jpg');
+      });
+    });
+
+    // ==================== isImageUrl 测试 ====================
+
+    describe('isImageUrl', () => {
+      it('should_detect_jpg_extension', 0, () => {
+        expect(isImageUrl('https://example.com/photo.jpg')).assertTrue();
+      });
+
+      it('should_detect_png_with_query_params', 0, () => {
+        expect(isImageUrl('https://example.com/photo.png?width=200')).assertTrue();
+      });
+
+      it('should_detect_cdn_domain_pattern', 0, () => {
+        expect(isImageUrl('https://img.36krcdn.com/hsossms/20260325/xxx')).assertTrue();
+      });
+
+      it('should_detect_pic_domain_pattern', 0, () => {
+        expect(isImageUrl('https://pic.zhimg.com/v2-xxx_720w')).assertTrue();
+      });
+
+      it('should_detect_image_path_pattern', 0, () => {
+        expect(isImageUrl('https://example.com/img/something')).assertTrue();
       });
     });
 

@@ -10,6 +10,7 @@ export struct ArticleItemComponent {
     url: '', author: '', publishedAt: 0, isRead: 0, isStarred: 0, coverImage: ''
   };
   @Prop recommendReason: string = '';
+  @State coverLoadFailed: boolean = false;
   onTap: () => void = () => {};
   onStarToggle: () => void = () => {};
 
@@ -17,16 +18,6 @@ export struct ArticleItemComponent {
     Stack({ alignContent: Alignment.TopStart }) {
       // 主内容区
       Row({ space: 12 }) {
-        // 封面图
-        if (this.article.coverImage) {
-          Image(this.article.coverImage)
-            .width(80)
-            .height(80)
-            .borderRadius(8)
-            .objectFit(ImageFit.Cover)
-            .opacity(this.article.isRead === 1 ? 0.5 : 1)
-        }
-
         // 文章信息
         Column({ space: 6 }) {
           Text(this.article.title)
@@ -67,18 +58,19 @@ export struct ArticleItemComponent {
         .layoutWeight(1)
         .alignItems(HorizontalAlign.Start)
 
-        // 收藏按钮
-        Button({ type: ButtonType.Circle }) {
-          SymbolGlyph($r(this.article.isStarred === 1 ? 'sys.symbol.star_fill' : 'sys.symbol.star'))
-            .fontSize(18)
-            .fontColor([this.article.isStarred === 1 ? Color.Orange : $r('sys.color.ohos_id_color_text_secondary')])
+        // 封面图（加载失败时隐藏，不显示占位符）
+        if (this.article.coverImage && !this.coverLoadFailed) {
+          Image(this.article.coverImage)
+            .width(80)
+            .height(80)
+            .borderRadius(8)
+            .objectFit(ImageFit.Contain)
+            .opacity(this.article.isRead === 1 ? 0.5 : 1)
+            .onError(() => {
+              this.coverLoadFailed = true;
+            })
         }
-        .width(32)
-        .height(32)
-        .backgroundColor(Color.Transparent)
-        .onClick(() => {
-          this.onStarToggle();
-        })
+
       }
       .width('100%')
       .padding(16)
@@ -92,6 +84,7 @@ export struct ArticleItemComponent {
           .borderRadius({ topLeft: 0, bottomRight: 8 })
           .padding({ left: 6, right: 6, top: 3, bottom: 3 })
       }
+
     }
     .width('100%')
     .backgroundColor($r('sys.color.ohos_id_color_background'))

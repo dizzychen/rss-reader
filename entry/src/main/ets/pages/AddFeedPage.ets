@@ -99,7 +99,7 @@ struct AddFeedPage {
       Promise.resolve().then(async () => {
         for (const pa of articles) {
           const coverImage = pa.coverImage || RssService.getInstance().extractFirstImage(pa.content);
-          await db.insertOrUpdateArticle({
+          const rowId = await db.insertOrUpdateArticle({
             feedId: savedFeedId,
             guid: pa.guid,
             title: pa.title,
@@ -112,6 +112,10 @@ struct AddFeedPage {
             isStarred: 0,
             coverImage: coverImage
           });
+          // 文章已存在但有新封面图：尝试回填
+          if (rowId === -1 && coverImage) {
+            await db.updateCoverImage(savedFeedId, pa.guid, coverImage);
+          }
         }
         console.info('AddFeedPage', `Background: inserted ${articles.length} articles for feed ${savedFeedId}`);
       }).catch((e: Error) => {

@@ -1,0 +1,352 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RSS Reader - Editorial Pro Demo</title>
+  <style>
+    :root {
+      --bg: #eef2f7;
+      --surface: #ffffff;
+      --surface-2: #f7f9fc;
+      --text-1: #0f172a;
+      --text-2: #334155;
+      --text-3: #64748b;
+      --brand: #1e3a8a;
+      --brand-2: #2563eb;
+      --accent: #f59e0b;
+      --line: #dbe3ee;
+      --ok: #0ea5a4;
+      --shadow: 0 8px 24px rgba(15, 23, 42, 0.08);
+      --radius-xl: 20px;
+      --radius-lg: 14px;
+      --radius-md: 10px;
+    }
+
+    * { box-sizing: border-box; }
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+      background: radial-gradient(circle at 20% -10%, #dbeafe 0%, transparent 36%),
+                  radial-gradient(circle at 100% 0%, #e0e7ff 0%, transparent 30%),
+                  var(--bg);
+      color: var(--text-1);
+    }
+
+    .phone {
+      width: min(440px, 100%);
+      margin: 28px auto;
+      background: var(--surface-2);
+      border-radius: 28px;
+      box-shadow: 0 20px 48px rgba(15, 23, 42, 0.18);
+      overflow: hidden;
+      border: 1px solid #d9e2ef;
+    }
+
+    .topbar {
+      padding: 16px 18px 12px;
+      background: linear-gradient(135deg, #0f2a66 0%, #1e3a8a 52%, #2747a8 100%);
+      color: #fff;
+    }
+
+    .top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 12px;
+    }
+
+    .brand {
+      font-size: 20px;
+      letter-spacing: 0.2px;
+      font-weight: 700;
+    }
+
+    .actions {
+      display: flex;
+      gap: 8px;
+    }
+
+    .icon-btn {
+      width: 32px;
+      height: 32px;
+      border-radius: 999px;
+      border: 1px solid rgba(255, 255, 255, 0.25);
+      background: rgba(255, 255, 255, 0.08);
+      color: #fff;
+      font-size: 14px;
+      display: grid;
+      place-items: center;
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .tab {
+      padding: 8px 14px;
+      border-radius: 999px;
+      font-size: 13px;
+      font-weight: 600;
+      border: 1px solid rgba(255, 255, 255, 0.26);
+      color: rgba(255, 255, 255, 0.9);
+      background: rgba(255, 255, 255, 0.06);
+    }
+
+    .tab.active {
+      color: #0f2a66;
+      background: #fff;
+      border-color: #fff;
+      box-shadow: 0 4px 12px rgba(7, 16, 40, 0.18);
+    }
+
+    .content {
+      padding: 14px;
+      display: grid;
+      gap: 12px;
+    }
+
+    .hero {
+      background: linear-gradient(140deg, #ffffff 0%, #f2f6ff 100%);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-xl);
+      box-shadow: var(--shadow);
+      padding: 14px;
+    }
+
+    .hero-label {
+      display: inline-flex;
+      gap: 6px;
+      align-items: center;
+      font-size: 11px;
+      color: var(--brand);
+      background: #eaf0ff;
+      border: 1px solid #c8d6ff;
+      border-radius: 999px;
+      padding: 4px 10px;
+      font-weight: 700;
+      margin-bottom: 10px;
+    }
+
+    .hero-title {
+      margin: 0;
+      font-size: 18px;
+      line-height: 1.35;
+      font-weight: 700;
+      color: var(--text-1);
+    }
+
+    .hero-sub {
+      margin: 8px 0 0;
+      font-size: 13px;
+      color: var(--text-2);
+      line-height: 1.55;
+    }
+
+    .section-title {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      margin: 2px 2px 0;
+      color: var(--text-2);
+      font-size: 13px;
+      font-weight: 600;
+    }
+
+    .article {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      box-shadow: 0 4px 12px rgba(15, 23, 42, 0.05);
+      padding: 12px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .article-top {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .cover {
+      width: 86px;
+      height: 68px;
+      border-radius: 10px;
+      background: linear-gradient(135deg, #93c5fd 0%, #3b82f6 40%, #1d4ed8 100%);
+      flex-shrink: 0;
+      position: relative;
+      overflow: hidden;
+    }
+
+    .cover::after {
+      content: "";
+      position: absolute;
+      inset: 0;
+      background: linear-gradient(0deg, rgba(15,23,42,.18), transparent 50%);
+    }
+
+    .body { min-width: 0; }
+
+    .title-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .tag-ai {
+      flex-shrink: 0;
+      margin-top: 1px;
+      font-size: 10px;
+      font-weight: 700;
+      letter-spacing: .1px;
+      color: var(--brand-2);
+      background: #edf4ff;
+      border: 1px solid #cfe0ff;
+      border-radius: 999px;
+      padding: 2px 8px;
+      line-height: 1.4;
+    }
+
+    .title {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.45;
+      color: var(--text-1);
+      font-weight: 650;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .summary {
+      margin: 6px 0 0;
+      color: var(--text-2);
+      font-size: 13px;
+      line-height: 1.5;
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .meta {
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      color: var(--text-3);
+      font-size: 12px;
+      margin-top: 2px;
+    }
+
+    .source {
+      color: var(--brand);
+      font-weight: 600;
+      max-width: 62%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .footer-note {
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-3);
+      padding: 2px 0 12px;
+    }
+
+    .article.read {
+      opacity: 0.72;
+    }
+
+    .article.read .title {
+      font-weight: 520;
+    }
+  </style>
+</head>
+<body>
+  <div class="phone">
+    <div class="topbar">
+      <div class="top-row">
+        <div class="brand">AIRSS</div>
+        <div class="actions">
+          <button class="icon-btn" aria-label="筛选">◉</button>
+          <button class="icon-btn" aria-label="设置">⚙</button>
+        </div>
+      </div>
+      <div class="tabs">
+        <div class="tab">最新</div>
+        <div class="tab active">推荐</div>
+        <div class="tab">收藏</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <section class="hero">
+        <div class="hero-label">✨ 今日编辑精选</div>
+        <h2 class="hero-title">LLM Agent 工程化进入“可交付”阶段：从 Demo 到生产落地</h2>
+        <p class="hero-sub">结合你最近关注的 AI 工程、移动端体验与架构治理，系统优先推荐了这组更具实操价值的内容。</p>
+      </section>
+
+      <div class="section-title">
+        <span>推荐文章</span>
+        <span>按相关度排序</span>
+      </div>
+
+      <article class="article">
+        <div class="article-top">
+          <div class="cover"></div>
+          <div class="body">
+            <div class="title-row">
+              <span class="tag-ai">AI推荐</span>
+              <h3 class="title">HarmonyOS NEXT UI 性能优化实践：列表渲染、状态管理与阅读流畅度提升</h3>
+            </div>
+            <p class="summary">从列表项结构、图片解码策略到交互反馈节奏，系统化梳理影响阅读体验的关键因素，并给出可落地方案。</p>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="source">Dev Weekly</span>
+          <span>12 分钟前</span>
+        </div>
+      </article>
+
+      <article class="article">
+        <div class="article-top">
+          <div class="cover" style="background:linear-gradient(135deg,#fca5a5 0%,#ef4444 44%,#7f1d1d 100%);"></div>
+          <div class="body">
+            <div class="title-row">
+              <span class="tag-ai">AI推荐</span>
+              <h3 class="title">信息密度与可读性平衡：移动阅读产品的排版系统设计</h3>
+            </div>
+            <p class="summary">通过字号级差、行高规则、颜色层级与卡片间距，让内容界面更专业，同时不牺牲浏览效率。</p>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="source">Product Design Notes</span>
+          <span>34 分钟前</span>
+        </div>
+      </article>
+
+      <article class="article read">
+        <div class="article-top">
+          <div class="cover" style="background:linear-gradient(135deg,#a7f3d0 0%,#10b981 45%,#065f46 100%);"></div>
+          <div class="body">
+            <div class="title-row">
+              <h3 class="title">RDB 缓存策略升级：如何在离线阅读中兼顾命中率与存储成本</h3>
+            </div>
+            <p class="summary">通过分层清理与收藏保护策略，避免缓存膨胀的同时维持首屏命中，提升弱网体验。</p>
+          </div>
+        </div>
+        <div class="meta">
+          <span class="source">Data Infra Daily</span>
+          <span>今天 09:12</span>
+        </div>
+      </article>
+
+      <div class="footer-note">Editorial Pro · 视觉方向 Demo（仅样式示意）</div>
+    </div>
+  </div>
+</body>
+</html>

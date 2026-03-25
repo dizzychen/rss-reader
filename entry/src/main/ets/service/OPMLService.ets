@@ -237,7 +237,7 @@ export class OPMLService {
           for (const pa of articlesToSave) {
             try {
               const coverImage = pa.coverImage || rss.extractFirstImage(pa.content);
-              await db.insertOrUpdateArticle({
+              const rowId = await db.insertOrUpdateArticle({
                 feedId: savedFeedId,
                 guid: pa.guid,
                 title: pa.title,
@@ -250,6 +250,10 @@ export class OPMLService {
                 isStarred: 0,
                 coverImage: coverImage
               });
+              // 文章已存在但有新封面图：尝试回填
+              if (rowId === -1 && coverImage) {
+                await db.updateCoverImage(savedFeedId, pa.guid, coverImage);
+              }
             } catch (articleErr) {
               // 文章插入失败不影响整体导入结果
               console.warn('OPMLService', `Article insert error: ${articleErr instanceof Error ? articleErr.message : String(articleErr)}`);

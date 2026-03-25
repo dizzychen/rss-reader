@@ -553,11 +553,15 @@ struct ArticleDetailPage {
                         .wordBreak(WordBreak.BREAK_WORD)
                         .margin({ bottom: 16 })
                     } else if (block.type === 'image') {
-                      Image(block.content)
-                        .width('100%')
-                        .objectFit(ImageFit.Contain)
-                        .borderRadius(8)
-                        .margin({ top: 8, bottom: 16 })
+                      Row() {
+                        Image(block.content)
+                          .width('50%')
+                          .objectFit(ImageFit.Contain)
+                          .borderRadius(8)
+                      }
+                      .width('100%')
+                      .justifyContent(FlexAlign.Center)
+                      .margin({ top: 8, bottom: 16 })
                     }
                   }, (block: ContentBlock, index: number) => `${index}-${block.type}`)
                 } else {

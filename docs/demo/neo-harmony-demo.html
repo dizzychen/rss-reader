@@ -1,0 +1,311 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>RSS Reader - Neo Harmony Demo</title>
+  <style>
+    :root {
+      --bg: #f5f7fb;
+      --surface: #ffffff;
+      --surface-soft: #f9fbff;
+      --text-1: #111827;
+      --text-2: #4b5563;
+      --text-3: #6b7280;
+      --line: #e5eaf2;
+      --primary: #ff6d00;
+      --primary-soft: #fff2e8;
+      --primary-line: #ffd8be;
+      --radius-xl: 18px;
+      --radius-lg: 12px;
+      --radius-md: 10px;
+      --shadow-soft: 0 6px 18px rgba(17, 24, 39, 0.06);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Noto Sans SC", sans-serif;
+      background:
+        radial-gradient(circle at 12% -6%, #fff4eb 0%, transparent 34%),
+        radial-gradient(circle at 94% 0%, #edf5ff 0%, transparent 30%),
+        var(--bg);
+      color: var(--text-1);
+    }
+
+    .phone {
+      width: min(440px, 100%);
+      margin: 28px auto;
+      border-radius: 28px;
+      overflow: hidden;
+      border: 1px solid #dfe6f0;
+      box-shadow: 0 20px 44px rgba(17, 24, 39, 0.14);
+      background: var(--surface-soft);
+    }
+
+    .topbar {
+      background: rgba(255, 255, 255, 0.92);
+      backdrop-filter: blur(8px);
+      border-bottom: 1px solid var(--line);
+      padding: 12px 14px 10px;
+    }
+
+    .top-row {
+      display: flex;
+      align-items: center;
+      justify-content: space-between;
+      margin-bottom: 10px;
+    }
+
+    .brand {
+      font-size: 20px;
+      font-weight: 700;
+      color: var(--text-1);
+      letter-spacing: .2px;
+    }
+
+    .tools {
+      display: flex;
+      align-items: center;
+      gap: 8px;
+      color: var(--text-3);
+      font-size: 12px;
+    }
+
+    .switch {
+      width: 38px;
+      height: 22px;
+      border-radius: 999px;
+      background: #ffd8be;
+      position: relative;
+      border: 1px solid #ffca9f;
+    }
+
+    .switch::after {
+      content: "";
+      position: absolute;
+      top: 2px;
+      left: 18px;
+      width: 16px;
+      height: 16px;
+      border-radius: 50%;
+      background: #fff;
+      box-shadow: 0 1px 3px rgba(0, 0, 0, 0.16);
+    }
+
+    .tabs {
+      display: flex;
+      gap: 8px;
+    }
+
+    .tab {
+      flex: 1;
+      text-align: center;
+      padding: 8px 0;
+      border-radius: 10px;
+      font-size: 14px;
+      font-weight: 600;
+      color: var(--text-3);
+      background: #f7f9fd;
+      border: 1px solid #edf1f7;
+    }
+
+    .tab.active {
+      background: #fff;
+      color: var(--text-1);
+      border-color: #e9edf4;
+      box-shadow: 0 2px 10px rgba(17, 24, 39, 0.05);
+    }
+
+    .content {
+      padding: 12px;
+      display: grid;
+      gap: 10px;
+    }
+
+    .article {
+      background: var(--surface);
+      border: 1px solid var(--line);
+      border-radius: var(--radius-lg);
+      box-shadow: var(--shadow-soft);
+      padding: 12px;
+    }
+
+    .article-wrap {
+      display: flex;
+      gap: 10px;
+      align-items: flex-start;
+    }
+
+    .thumb {
+      width: 80px;
+      height: 80px;
+      border-radius: var(--radius-md);
+      flex-shrink: 0;
+      background: linear-gradient(145deg, #c7ddff 0%, #82b0ff 42%, #4678da 100%);
+      overflow: hidden;
+    }
+
+    .main {
+      min-width: 0;
+      flex: 1;
+      display: grid;
+      gap: 6px;
+    }
+
+    .title-row {
+      display: flex;
+      gap: 8px;
+      align-items: flex-start;
+    }
+
+    .ai-chip {
+      flex-shrink: 0;
+      font-size: 10px;
+      font-weight: 600;
+      color: var(--primary);
+      background: var(--primary-soft);
+      border: 1px solid var(--primary-line);
+      border-radius: 999px;
+      padding: 2px 8px;
+      line-height: 1.4;
+      margin-top: 1px;
+    }
+
+    .title {
+      margin: 0;
+      font-size: 15px;
+      line-height: 1.42;
+      font-weight: 620;
+      color: var(--text-1);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .summary {
+      margin: 0;
+      font-size: 13px;
+      line-height: 1.5;
+      color: var(--text-2);
+      display: -webkit-box;
+      -webkit-line-clamp: 2;
+      -webkit-box-orient: vertical;
+      overflow: hidden;
+    }
+
+    .meta {
+      margin-top: 2px;
+      display: flex;
+      justify-content: space-between;
+      align-items: center;
+      font-size: 12px;
+      color: var(--text-3);
+    }
+
+    .source {
+      color: #2563eb;
+      max-width: 58%;
+      white-space: nowrap;
+      overflow: hidden;
+      text-overflow: ellipsis;
+    }
+
+    .star {
+      width: 28px;
+      height: 28px;
+      border-radius: 50%;
+      border: 1px solid #e8edf5;
+      background: #fff;
+      color: #94a3b8;
+      display: grid;
+      place-items: center;
+      flex-shrink: 0;
+      margin-top: 2px;
+      font-size: 14px;
+    }
+
+    .article.read {
+      opacity: .68;
+    }
+
+    .footer {
+      text-align: center;
+      font-size: 12px;
+      color: var(--text-3);
+      padding: 4px 0 12px;
+    }
+  </style>
+</head>
+<body>
+  <div class="phone">
+    <div class="topbar">
+      <div class="top-row">
+        <div class="brand">AIRSS</div>
+        <div class="tools">
+          <span>仅未读</span>
+          <div class="switch"></div>
+        </div>
+      </div>
+      <div class="tabs">
+        <div class="tab active">最新</div>
+        <div class="tab">推荐</div>
+      </div>
+    </div>
+
+    <div class="content">
+      <article class="article">
+        <div class="article-wrap">
+          <div class="thumb"></div>
+          <div class="main">
+            <div class="title-row">
+              <span class="ai-chip">AI推荐</span>
+              <h3 class="title">HarmonyOS NEXT 列表体验升级：信息密度与阅读舒适度如何平衡？</h3>
+            </div>
+            <p class="summary">通过卡片留白、层级化颜色和统一排版规则，既保留高效扫描能力，也让阅读更轻松、更有秩序感。</p>
+            <div class="meta">
+              <span class="source">Mobile UX Weekly</span>
+              <span>8 分钟前</span>
+            </div>
+          </div>
+          <div class="star">☆</div>
+        </div>
+      </article>
+
+      <article class="article">
+        <div class="article-wrap">
+          <div class="thumb" style="background:linear-gradient(145deg,#ffd7be 0%,#ffae79 48%,#ff7a1a 100%);"></div>
+          <div class="main">
+            <h3 class="title">RSS 阅读器中的推荐排序：从规则引擎到 AI 增强的落地路径</h3>
+            <p class="summary">对比本地评分与 AI 排序的适用场景，并给出稳定降级策略，确保体验一致与性能可控。</p>
+            <div class="meta">
+              <span class="source">Engineering Digest</span>
+              <span>24 分钟前</span>
+            </div>
+          </div>
+          <div class="star">★</div>
+        </div>
+      </article>
+
+      <article class="article read">
+        <div class="article-wrap">
+          <div class="thumb" style="background:linear-gradient(145deg,#c7f0da 0%,#7bdcb5 45%,#16a085 100%);"></div>
+          <div class="main">
+            <h3 class="title">离线缓存与收藏保护机制：阅读产品数据层的实用做法</h3>
+            <p class="summary">在不增加用户认知成本的前提下，提升加载速度并减少内容丢失风险，保持核心功能稳定可靠。</p>
+            <div class="meta">
+              <span class="source">Data Notes</span>
+              <span>昨天 21:08</span>
+            </div>
+          </div>
+          <div class="star">☆</div>
+        </div>
+      </article>
+
+      <div class="footer">Neo Harmony · 视觉方向 Demo（仅样式示意）</div>
+    </div>
+  </div>
+</body>
+</html>

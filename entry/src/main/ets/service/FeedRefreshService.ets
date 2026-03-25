@@ -66,7 +66,7 @@ export class FeedRefreshService {
     console.info(TAG, `成功: ${successCount}, 失败: ${failCount}, 新文章: ${newArticleCount}, 耗时: ${duration}ms`);
 
     if (newArticleCount > 0 && settings.notificationEnabled) {
-      await this.sendNotification(newArticleCount);
+      await this.sendNotification(context, newArticleCount);
     }
 
     return newArticleCount;
@@ -96,7 +96,12 @@ export class FeedRefreshService {
         isStarred: 0,
         coverImage: coverImage
       });
-      if (rowId > 0) newCount++;
+      if (rowId > 0) {
+        newCount++;
+      } else if (rowId === -1 && coverImage) {
+        // 文章已存在但有新封面图：尝试回填
+        await DatabaseHelper.getInstance().updateCoverImage(feed.id!, pa.guid, coverImage);
+      }
     }
 
     // 更新订阅源元信息
@@ -114,13 +119,24 @@ export class FeedRefreshService {
     return newCount;
   }
 
-  private async sendNotification(count: number): Promise<void> {
+  private async sendNotification(context: common.Context, count: number): Promise<void> {
+    const notificationId = 1001;
+    const targetBundleName = 'com.dizzy.rssreader';
+    const contextType = (context as Object).constructor?.name ?? 'UnknownContext';
+
     try {
-      console.info(TAG, `发送通知: ${count} 篇新文章`);
+      const isEnabled = await notificationManager.isNotificationEnabled();
+      if (!isEnabled) {
+        console.warn(TAG, `通知未启用，跳过发送: count=${count}, contextType=${contextType}`);
+        return;
+      }
+
+      console.info(TAG,
+        `发送通知: count=${count}, notificationId=${notificationId}, bundleName=${targetBundleName}, contextType=${contextType}`);
 
       // 创建 Want 对象，指定要启动的 Ability
       const want: Want = {
-        bundleName: 'com.dizzy.myapplication',
+        bundleName: targetBundleName,
         abilityName: 'EntryAbility',
         parameters: {
           from: 'notification'
@@ -138,7 +154,7 @@ export class FeedRefreshService {
       const agent: WantAgent = await wantAgent.getWantAgent(wantAgentInfo);
 
       const request: notificationManager.NotificationRequest = {
-        id: 1001,
+        id: notificationId,
         content: {
           notificationContentType: notificationManager.ContentType.NOTIFICATION_CONTENT_BASIC_TEXT,
           normal: {
@@ -152,9 +168,10 @@ export class FeedRefreshService {
       };
 
       await notificationManager.publish(request);
-      console.info(TAG, '通知发送成功');
+      console.info(TAG, `通知发送成功: notificationId=${notificationId}, count=${count}`);
     } catch (e) {
-      console.error(TAG, `通知发送失败: ${e}`);
+      console.error(TAG,
+        `通知发送失败: notificationId=${notificationId}, bundleName=${targetBundleName}, contextType=${contextType}, error=${JSON.stringify(e)}`);
     }
   }
 }

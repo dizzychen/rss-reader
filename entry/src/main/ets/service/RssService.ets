@@ -279,21 +279,22 @@ export class RssService {
         this.getTagContent(itemXml, 'date')
       );
 
-      // 封面图：从 enclosure 或 media:content 标签提取
+      // 封面图：按优先级依次从 enclosure → media:content/media:thumbnail → HTML 内容提取
       let coverImage = '';
+      // 1. 尝试从 enclosure 提取
       const enclosureType = this.getTagAttribute(itemXml, 'enclosure', 'type');
       const enclosureUrl = this.getTagAttribute(itemXml, 'enclosure', 'url');
       if (enclosureUrl) {
         if (enclosureType.startsWith('image/') || this.isImageUrl(enclosureUrl)) {
           coverImage = enclosureUrl;
+          console.info(TAG, `Cover from enclosure: ${coverImage.substring(0, 80)}`);
         }
       }
-      // 尝试从 media:content 或 media:thumbnail 提取
+      // 2. 尝试从 media:content 或 media:thumbnail 精确提取
       if (!coverImage) {
-        const mediaUrl = this.getTagAttribute(itemXml, 'content', 'url') ||
-          this.getTagAttribute(itemXml, 'thumbnail', 'url');
-        if (mediaUrl && this.isImageUrl(mediaUrl)) {
-          coverImage = mediaUrl;
+        coverImage = this.extractMediaImage(itemXml);
+        if (coverImage) {
+          console.info(TAG, `Cover from media tag: ${coverImage.substring(0, 80)}`);
         }
       }
 
@@ -310,6 +311,9 @@ export class RssService {
 
       if (!article.coverImage && article.content) {
         article.coverImage = this.extractFirstImage(article.content);
+        if (article.coverImage) {
+          console.info(TAG, `Cover from HTML content: ${article.coverImage.substring(0, 80)}`);
+        }
       }
 
       info.articles.push(article);
@@ -378,8 +382,18 @@ export class RssService {
         coverImage: ''
       };
 
+      // 先尝试从 media:content / media:thumbnail 提取封面图
+      article.coverImage = this.extractMediaImage(entryXml);
+      if (article.coverImage) {
+        console.info(TAG, `Atom cover from media tag: ${article.coverImage.substring(0, 80)}`);
+      }
+
+      // 回退到从 HTML 内容中提取
       if (!article.coverImage && article.content) {
         article.coverImage = this.extractFirstImage(article.content);
+        if (article.coverImage) {
+          console.info(TAG, `Atom cover from HTML content: ${article.coverImage.substring(0, 80)}`);
+        }
       }
 
       info.articles.push(article);
@@ -468,8 +482,18 @@ export class RssService {
         coverImage: ''
       };
 
+      // 先尝试从 media:content / media:thumbnail 提取封面图
+      article.coverImage = this.extractMediaImage(itemXml);
+      if (article.coverImage) {
+        console.info(TAG, `RDF cover from media tag: ${article.coverImage.substring(0, 80)}`);
+      }
+
+      // 回退到从 HTML 内容中提取
       if (!article.coverImage && article.content) {
         article.coverImage = this.extractFirstImage(article.content);
+        if (article.coverImage) {
+          console.info(TAG, `RDF cover from HTML content: ${article.coverImage.substring(0, 80)}`);
+        }
       }
 
       info.articles.push(article);
@@ -505,18 +529,86 @@ export class RssService {
   }
 
   extractFirstImage(html: string): string {
-    const match = html.match(/<img[^>]+src=["']([^"']+)["']/i);
-    return match ? match[1] : '';
+    // 1. 标准 <img src="...">
+    const srcMatch = html.match(/<img[^>]+src\s*=\s*["']([^"']+)["']/i);
+    if (srcMatch) {
+      return srcMatch[1];
+    }
+    // 2. 懒加载属性：data-src, data-original, data-lazy-src
+    const lazySrcMatch = html.match(/<img[^>]+(?:data-src|data-original|data-lazy-src)\s*=\s*["']([^"']+)["']/i);
+    if (lazySrcMatch) {
+      return lazySrcMatch[1];
+    }
+    // 3. 视频封面 <video poster="...">
+    const posterMatch = html.match(/<video[^>]+poster\s*=\s*["']([^"']+)["']/i);
+    if (posterMatch) {
+      return posterMatch[1];
+    }
+    // 4. <source srcset="..."> 中第一个 URL
+    const srcsetMatch = html.match(/<source[^>]+srcset\s*=\s*["']([^\s"',]+)/i);
+    if (srcsetMatch) {
+      return srcsetMatch[1];
+    }
+    return '';
   }
 
   /**
-   * 判断 URL 是否指向图片
+   * 从 XML 片段中提取 media:content 或 media:thumbnail 的图片 URL。
+   * 精确匹配 media: 命名空间，支持自闭合标签和非自闭合标签。
+   * 结合 medium/type 属性判断是否为图片，不仅依赖 URL 扩展名。
+   */
+  extractMediaImage(xml: string): string {
+    // 匹配所有 <media:content ... /> 或 <media:content ...>...</media:content> 标签
+    const mediaContentPattern = /<media:content\s([^>]*?)(?:\/>|>[\s\S]*?<\/media:content>)/gi;
+    let mediaMatch = mediaContentPattern.exec(xml);
+    while (mediaMatch !== null) {
+      const attrs = mediaMatch[1];
+      const urlMatch = attrs.match(/url\s*=\s*["']([^"']+)["']/i);
+      if (urlMatch) {
+        const url = urlMatch[1];
+        // 通过 medium 或 type 属性判断是否为图片
+        const mediumMatch = attrs.match(/medium\s*=\s*["']([^"']+)["']/i);
+        const typeMatch = attrs.match(/type\s*=\s*["']([^"']+)["']/i);
+        const isImage = (mediumMatch && mediumMatch[1].toLowerCase() === 'image') ||
+          (typeMatch && typeMatch[1].toLowerCase().startsWith('image/')) ||
+          this.isImageUrl(url);
+        if (isImage) {
+          return url;
+        }
+      }
+      mediaMatch = mediaContentPattern.exec(xml);
+    }
+
+    // 匹配 <media:thumbnail url="..." />
+    const thumbnailPattern = /<media:thumbnail\s([^>]*?)(?:\/>|>[\s\S]*?<\/media:thumbnail>)/gi;
+    const thumbMatch = thumbnailPattern.exec(xml);
+    if (thumbMatch) {
+      const attrs = thumbMatch[1];
+      const urlMatch = attrs.match(/url\s*=\s*["']([^"']+)["']/i);
+      if (urlMatch) {
+        return urlMatch[1];
+      }
+    }
+
+    return '';
+  }
+
+  /**
+   * 判断 URL 是否指向图片（基于扩展名）
    */
   private isImageUrl(url: string): boolean {
-    const lower = url.toLowerCase().split('?')[0];
-    return lower.endsWith('.jpg') || lower.endsWith('.jpeg') || lower.endsWith('.png') ||
-      lower.endsWith('.gif') || lower.endsWith('.webp') || lower.endsWith('.svg') ||
-      lower.endsWith('.bmp') || lower.endsWith('.ico');
+    const lower = url.toLowerCase().split('?')[0].split('#')[0];
+    // 移除末尾的路径参数
+    const lastSegment = lower.split('/').pop() || '';
+    return lastSegment.endsWith('.jpg') || lastSegment.endsWith('.jpeg') || lastSegment.endsWith('.png') ||
+      lastSegment.endsWith('.gif') || lastSegment.endsWith('.webp') || lastSegment.endsWith('.svg') ||
+      lastSegment.endsWith('.bmp') || lastSegment.endsWith('.ico') ||
+      // 兼容常见图片 CDN 路径模式
+      lower.includes('/img/') || lower.includes('/image/') || lower.includes('/photo/') ||
+      lower.includes('.img.') || lower.includes('imageview') ||
+      // 常见图片 CDN 域名特征
+      lower.includes('img.') || lower.includes('pic.') || lower.includes('photo.') ||
+      lower.includes('image.') || lower.includes('cdn.');
   }
 
   formatDate(timestamp: number): string {

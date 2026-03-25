@@ -443,6 +443,33 @@ export class DatabaseHelper {
     await this.rdbStore.update({ is_starred: isStarred }, pred);
   }
 
+  /**
+   * 回填已有文章的封面图（仅当已有 cover_image 为空时更新）
+   * 通过 feedId + guid 联合定位文章，与插入去重策略一致
+   */
+  async updateCoverImage(feedId: number, guid: string, coverImage: string): Promise<void> {
+    if (!this.rdbStore || !coverImage) return;
+    // 查询该文章当前的 cover_image
+    const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+    pred.equalTo('feed_id', feedId).and().equalTo('guid', guid);
+    const result = await this.rdbStore.query(pred, ['id', 'cover_image']);
+    if (result.goToNextRow()) {
+      const existingCover = result.getString(result.getColumnIndex('cover_image'));
+      if (!existingCover) {
+        const id = result.getLong(result.getColumnIndex('id'));
+        result.close();
+        const updatePred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+        updatePred.equalTo('id', id);
+        await this.rdbStore.update({ cover_image: coverImage }, updatePred);
+        console.info(TAG, `Backfilled cover image for article id=${id}`);
+      } else {
+        result.close();
+      }
+    } else {
+      result.close();
+    }
+  }
+
   async cleanOldCache(feedId: number, keepCount: number): Promise<void> {
     if (!this.rdbStore) return;
     // 保留最新 keepCount 篇（收藏的不删）
