@@ -1,7 +1,7 @@
 {
   "app": {
     "bundleName": "com.dizzy.rssreader",
-    "vendor": "example",
+    "vendor": "dizzy",  // TODO: 替换为你的真实开发者名称（与华为开发者联盟认证名称一致）
     "versionCode": 1000000,
     "versionName": "1.0.0",
     "icon": "$media:startIcon",

@@ -22,12 +22,15 @@ export struct HomePage {
   @State sortMode: string = Constants.SORT_MODE_LATEST;
   @State currentTabIndex: number = 0; // 0: 最新, 1: 推荐
   @Prop @Watch('onRefreshTickChanged') refreshTick: number = 0;
+  @Prop @Watch('onFullReloadTickChanged') fullReloadTick: number = 0;
+  @State private listVersion: number = 0; // 每次 loadArticles(true) 后递增，强制 ForEach 重新渲染
   private pageOffset: number = 0;
   private recommendPage: number = 0;
   private pageSize: number = 30;
   private feedMap: Map<number, string> = new Map();
   private exposedArticleIds: Map<number, string> = new Map();
   private tabController: TabsController = new TabsController();
+  private isFullReloading: boolean = false; // 防止并发 loadArticles(true)
 
   /** 获取当前 Tab 对应的文章列表 */
   private getCurrentArticles(): Article[] {
@@ -85,6 +88,11 @@ export struct HomePage {
     this.syncArticleStatus();
   }
 
+  onFullReloadTickChanged() {
+    // 后台刷新完成后，完整重新加载文章列表
+    this.loadArticles(true);
+  }
+
   /**
    * 增量同步：只更新当前列表中文章的已读/收藏状态，不移除或重排文章
    */
@@ -124,6 +132,14 @@ export struct HomePage {
   }
 
   async loadArticles(reset: boolean = true) {
+    // 防止多个 loadArticles(true) 并发执行（如下拉刷新和自动刷新同时触发）
+    if (reset && this.isFullReloading) {
+      console.info('HomePage', 'loadArticles(true) 已在进行中，跳过重复调用');
+      return;
+    }
+    if (reset) {
+      this.isFullReloading = true;
+    }
     const articles = this.getCurrentArticles();
     if (reset) {
       this.flushSkipBehaviors();
@@ -167,6 +183,7 @@ export struct HomePage {
       if (reset) {
         this.setCurrentArticles(items);
         this.exposedArticleIds.clear();
+        this.listVersion++;
       } else {
         this.setCurrentArticles(this.getCurrentArticles().concat(items));
       }
@@ -185,6 +202,9 @@ export struct HomePage {
     } finally {
       this.isLoading = false;
       this.isLoadingMore = false;
+      if (reset) {
+        this.isFullReloading = false;
+      }
     }
   }
 
@@ -265,8 +285,10 @@ export struct HomePage {
   async doRefresh() {
     this.isRefreshing = true;
     try {
-      await FeedRefreshService.getInstance().refreshAll(this.getUIContext().getHostContext()!);
+      const newCount = await FeedRefreshService.getInstance().refreshAll(this.getUIContext().getHostContext()!);
       await this.loadArticles(true);
+      const msg = newCount > 0 ? `已更新 ${newCount} 篇新文章` : '暂无新内容';
+      this.getUIContext().getPromptAction().showToast({ message: msg });
     } catch (e) {
       console.error('HomePage', `刷新失败: ${e}`);
     } finally {
@@ -483,7 +505,7 @@ export struct HomePage {
                   }
                 }
               })
-            }, (article: Article) => `${article.id}-${article.isStarred}-${article.isRead}`)
+            }, (article: Article) => `${this.listVersion}-${article.id}-${article.isStarred}-${article.isRead}`)
 
             ListItem() {
               Row() {
@@ -586,7 +608,7 @@ export struct HomePage {
                   }
                 }
               })
-            }, (article: Article) => `${article.id}-${article.isStarred}-${article.isRead}`)
+            }, (article: Article) => `${this.listVersion}-${article.id}-${article.isStarred}-${article.isRead}`)
 
             ListItem() {
               Row() {

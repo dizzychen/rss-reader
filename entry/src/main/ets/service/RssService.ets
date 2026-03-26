@@ -49,10 +49,13 @@ export class RssService {
         expectDataType: http.HttpDataType.STRING,
         connectTimeout: 30000,  // 增加到 30 秒
         readTimeout: 60000,     // 增加到 60 秒
+        usingCache: false,      // 禁用系统 HTTP 缓存，确保每次拿到最新内容
         header: {
           'User-Agent': 'Mozilla/5.0 (Linux; Android 12) AppleWebKit/537.36 Chrome/100.0 Mobile Safari/537.36',
           'Accept': 'application/rss+xml, application/atom+xml, application/xml, text/xml, */*',
-          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8'
+          'Accept-Language': 'zh-CN,zh;q=0.9,en;q=0.8',
+          'Cache-Control': 'no-cache, no-store',
+          'Pragma': 'no-cache'
         }
       });
       console.info(TAG, `HTTP response code: ${response.responseCode}`);

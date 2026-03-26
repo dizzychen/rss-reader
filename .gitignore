@@ -1,3 +1,4 @@
+# ===== HarmonyOS / DevEco Studio =====
 /node_modules
 /oh_modules
 /local.properties
@@ -9,12 +10,32 @@
 /.clang-format
 /.clang-tidy
 **/.test
+**/.preview
 /.appanalyzer
 
-# CodeBuddy 工具缓存
+# ===== 签名证书与密钥（绝对不能泄露） =====
+*.p12
+*.cer
+*.csr
+*.p7b
+*.jks
+docs/deploy/
+material/
+
+# ===== 构建产物 =====
+*.hap
+*.app
+*.har
+
+# ===== AI 生成的临时素材 =====
+/generated-icons
+/generated-images
+/ICON_TEST_REPORT.md
+
+# ===== CodeBuddy =====
 /.codebuddy
 
-# 临时调试/调查文档
+# ===== 临时调试/调查文档 =====
 /FIXES_SUMMARY.md
 /QUICK_REFERENCE.md
 /TESTING.md

@@ -5,6 +5,7 @@ import { StarredPage } from './StarredPage';
 import { MePage } from './MePage';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { SettingsService } from '../service/SettingsService';
+import { FeedRefreshService } from '../service/FeedRefreshService';
 
 @Entry
 @Component
@@ -16,6 +17,8 @@ struct Index {
   @State feedsRefreshTick: number = 0;
   @State starredRefreshTick: number = 0;
   @State meRefreshTick: number = 0;
+  // 完整重载触发器：后台刷新完成后需要重新加载文章列表（区别于状态同步）
+  @State homeFullReloadTick: number = 0;
 
   aboutToAppear() {
     // 确保数据库和设置服务已初始化完毕再渲染页面
@@ -31,6 +34,8 @@ struct Index {
       this.dbReady = true;
       // DB 就绪后立即触发当前 Tab 加载数据
       this.triggerCurrentTabRefresh();
+      // 后台自动刷新订阅源，完成后刷新首页
+      this.autoRefreshOnLaunch();
     }).catch((e: Error) => {
       console.error('Index', `DB init failed: ${e?.message}`);
       // 即便失败也显示页面，避免白屏
@@ -65,6 +70,26 @@ struct Index {
     }
   }
 
+  /**
+   * 启动时自动在后台刷新所有订阅源，完成后触发当前 Tab 刷新
+   */
+  private autoRefreshOnLaunch(): void {
+    const ctx = this.getUIContext().getHostContext();
+    if (!ctx) return;
+    FeedRefreshService.getInstance().refreshAll(ctx).then((newCount: number) => {
+      console.info('Index', `启动自动刷新完成，新增 ${newCount} 篇文章`);
+      // 无论是否有新文章，都触发完整重载（已有文章内容可能也已更新）
+      this.homeFullReloadTick++;
+      this.feedsRefreshTick++;
+      // 提示用户刷新结果
+      const msg = newCount > 0 ? `已更新 ${newCount} 篇新文章` : '订阅内容已是最新';
+      this.getUIContext().getPromptAction().showToast({ message: msg });
+    }).catch((e: Error) => {
+      console.error('Index', `启动自动刷新失败: ${e?.message}`);
+      this.getUIContext().getPromptAction().showToast({ message: `刷新失败: ${e?.message ?? '未知错误'}` });
+    });
+  }
+
   @Builder
   tabBarBuilder(index: number, iconName: string, selectedIconName: string, label: string) {
     Column({ space: 4 }) {
@@ -86,7 +111,7 @@ struct Index {
       if (this.dbReady) {
         Tabs({ barPosition: BarPosition.End, index: this.currentIndex }) {
           TabContent() {
-            HomePage({ refreshTick: this.homeRefreshTick })
+            HomePage({ refreshTick: this.homeRefreshTick, fullReloadTick: this.homeFullReloadTick })
           }
           .tabBar(this.tabBarBuilder(0, 'house', 'house_fill', '首页'))
 

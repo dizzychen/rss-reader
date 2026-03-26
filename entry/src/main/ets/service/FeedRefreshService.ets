@@ -11,6 +11,8 @@ export class FeedRefreshService {
   private static instance: FeedRefreshService;
   // 记录上次刷新时间，用于调试
   private lastRefreshTime: number = 0;
+  // 刷新锁：防止并发刷新
+  private refreshPromise: Promise<number> | null = null;
 
   static getInstance(): FeedRefreshService {
     if (!FeedRefreshService.instance) {
@@ -27,9 +29,22 @@ export class FeedRefreshService {
   }
 
   /**
-   * 刷新所有订阅源
+   * 刷新所有订阅源（带并发锁：如果已有刷新在进行，直接复用其结果）
    */
   async refreshAll(context: common.Context): Promise<number> {
+    if (this.refreshPromise) {
+      console.info(TAG, '刷新已在进行中，等待当前刷新完成...');
+      return this.refreshPromise;
+    }
+    this.refreshPromise = this.doRefreshAll(context);
+    try {
+      return await this.refreshPromise;
+    } finally {
+      this.refreshPromise = null;
+    }
+  }
+
+  private async doRefreshAll(context: common.Context): Promise<number> {
     const startTime = Date.now();
     console.info(TAG, `===== 开始刷新所有订阅源 =====`);
     console.info(TAG, `刷新时间: ${new Date().toISOString()}`);

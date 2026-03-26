@@ -301,6 +301,12 @@ export class DatabaseHelper {
 
   // ==================== Article CRUD ====================
 
+  /**
+   * 插入或更新文章：
+   * - 新文章（feedId+guid 不存在）：插入，返回新行 id (> 0)
+   * - 已有文章：更新内容字段（title/summary/content/url/author/publishedAt/coverImage），
+   *   保留用户状态（isRead/isStarred/aiSummary），返回 -1
+   */
   async insertOrUpdateArticle(article: Article): Promise<number> {
     if (!this.rdbStore) return -1;
     const values: relationalStore.ValuesBucket = {
@@ -317,8 +323,30 @@ export class DatabaseHelper {
       cover_image: article.coverImage,
       cached_at: Date.now()
     };
-    return await this.rdbStore.insert(Constants.TABLE_ARTICLES, values,
+    // 先尝试插入新文章
+    const rowId = await this.rdbStore.insert(Constants.TABLE_ARTICLES, values,
       relationalStore.ConflictResolution.ON_CONFLICT_IGNORE);
+    if (rowId > 0) {
+      return rowId; // 新文章插入成功
+    }
+    // 文章已存在（feedId+guid 冲突），更新内容字段但保留用户状态
+    const updateValues: relationalStore.ValuesBucket = {
+      title: article.title,
+      summary: article.summary,
+      content: article.content,
+      url: article.url,
+      author: article.author,
+      published_at: article.publishedAt,
+      cached_at: Date.now()
+    };
+    // 仅在有封面图时更新（避免覆盖已有封面为空）
+    if (article.coverImage) {
+      updateValues['cover_image'] = article.coverImage;
+    }
+    const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+    pred.equalTo('feed_id', article.feedId).and().equalTo('guid', article.guid);
+    await this.rdbStore.update(updateValues, pred);
+    return -1; // 返回 -1 表示已存在（已更新）
   }
 
   async getArticlesByFeedId(feedId: number, limit: number = 50, offset: number = 0): Promise<Article[]> {
