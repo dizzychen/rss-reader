@@ -66,6 +66,7 @@ export class Constants {
   static readonly MEMORY_DAILY_DIR: string = 'memory/daily';
   static readonly MEMORY_SOUL_FILE: string = 'memory/SOUL.md';
   static readonly MEMORY_PROFILE_FILE: string = 'memory/PROFILE.md';
+  static readonly MEMORY_LESSONS_FILE: string = 'memory/LESSONS.md';
 
   // 记忆系统 Preferences 键名
   static readonly PREF_AI_API_KEY: string = 'ai_api_key';
@@ -112,10 +113,11 @@ export class Constants {
   static readonly SORT_MODE_LATEST: string = 'latest';
   static readonly SORT_MODE_RECOMMEND: string = 'recommend';
 
-  // 推荐评分权重
-  static readonly W_FEED: number = 0.45;         // 订阅源匹配权重
-  static readonly W_FRESHNESS: number = 0.25;    // 时效性权重
-  static readonly W_TOPIC: number = 0.15;        // 话题匹配权重
+  // 推荐评分权重（内容驱动：摘要为主，标题为辅）
+  static readonly W_CONTENT: number = 0.45;      // 摘要内容关键词匹配权重（主导）
+  static readonly W_TOPIC: number = 0.30;        // 话题/标题匹配权重（辅助）
+  static readonly W_FRESHNESS: number = 0.20;    // 时效性权重
+  static readonly W_FEED: number = 0.05;         // 订阅源匹配权重（微调）
 
   // 推荐参数
   static readonly RECOMMEND_CACHE_TTL: number = 1800000;   // 画像缓存过期时间（30分钟，ms）
@@ -132,4 +134,58 @@ export class Constants {
   static readonly AI_PROFILE_SYSTEM_PROMPT: string =
     '你是一个阅读行为分析专家，负责根据用户的阅读数据生成画像洞察。' +
     '你的输出必须是严格的 JSON 格式，不要包含任何其他文字。';
+
+  // ===== 简报系统 =====
+
+  // 简报缓存文件前缀（存于 memory/ 目录下，格式 briefing_YYYY-MM-DD.json）
+  static readonly BRIEFING_CACHE_PREFIX: string = 'memory/briefing_';
+
+  // 简报偏好
+  static readonly PREF_BRIEFING_COUNT: string = 'briefing_count';
+  static readonly DEFAULT_BRIEFING_COUNT: number = 5;
+  static readonly BRIEFING_COUNT_OPTIONS: number[] = [3, 5, 8];
+  static readonly BRIEFING_COUNT_LABELS: string[] = ['3 篇', '5 篇', '8 篇'];
+
+  // 自动生成简报
+  static readonly PREF_AUTO_BRIEFING: string = 'auto_briefing_enabled';
+  static readonly DEFAULT_AUTO_BRIEFING: boolean = true;
+
+  // 简报 AI 参数
+  static readonly BRIEFING_MAX_TOKENS: number = 1800;
+
+  // 日内画像刷新
+  static readonly QUICK_REFRESH_THRESHOLD: number = 5;  // 阅读篇数达到此阈值触发日内刷新
+
+  // 本地话题提取停用词
+  static readonly STOP_WORDS: string[] = [
+    // 中文停用词
+    '的', '了', '在', '是', '我', '有', '和', '就', '不', '人', '都', '一', '一个',
+    '上', '也', '很', '到', '说', '要', '去', '你', '会', '着', '没有', '看', '好',
+    '自己', '这', '他', '她', '它', '们', '那', '些', '什么', '之', '与', '为',
+    '中', '大', '年', '对', '以', '及', '等', '可以', '被', '从', '而', '但',
+    '如何', '使用', '通过', '进行', '关于', '更多', '什么',
+    // 英文停用词
+    'a', 'an', 'the', 'is', 'are', 'was', 'were', 'be', 'been', 'being',
+    'have', 'has', 'had', 'do', 'does', 'did', 'will', 'would', 'could',
+    'should', 'may', 'might', 'can', 'shall', 'to', 'of', 'in', 'for',
+    'on', 'with', 'at', 'by', 'from', 'as', 'into', 'through', 'during',
+    'before', 'after', 'above', 'below', 'between', 'and', 'but', 'or',
+    'not', 'no', 'so', 'if', 'then', 'than', 'too', 'very', 'just',
+    'about', 'up', 'out', 'how', 'what', 'which', 'who', 'when', 'where',
+    'why', 'all', 'each', 'every', 'both', 'few', 'more', 'most', 'other',
+    'some', 'such', 'only', 'own', 'same', 'that', 'this', 'these', 'those',
+    'it', 'its', 'i', 'me', 'my', 'we', 'our', 'you', 'your', 'he', 'him',
+    'his', 'she', 'her', 'they', 'them', 'their', 'new', 'one', 'two'
+  ];
+
+  // 离散时间衰减分档（OpenClaw V2 对齐）
+  static readonly DECAY_BRACKETS: Array<[number, number]> = [
+    [1, 1.0],    // 0-1 天：不衰减
+    [3, 0.9],    // 1-3 天
+    [7, 0.7],    // 3-7 天
+    [14, 0.4],   // 7-14 天
+    [Infinity, 0.1]  // 14 天以上
+  ];
+  static readonly DECAY_CAP_7D: number = 0.3;    // 7 天以上权重上限
+  static readonly DECAY_CAP_14D: number = 0.05;  // 14 天以上强制归档权重
 }
