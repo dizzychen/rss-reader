@@ -4,6 +4,8 @@ import { MemoryFileHelper } from './MemoryFileHelper';
 import { MemoryService } from './MemoryService';
 import { AIService } from './AIService';
 import { InterestCalculator } from '../utils/InterestCalculator';
+import { TopicExtractor } from '../utils/TopicExtractor';
+import { RecommendService } from './RecommendService';
 import { DateUtil } from '../utils/DateUtil';
 import { MarkdownUtil } from '../utils/MarkdownUtil';
 import { Constants } from '../constants/Constants';
@@ -17,7 +19,6 @@ interface AggregatedStats {
   avgReadDuration: number;
   topKeywords: string[];
   feedAvgDuration: Map<string, number>;
-  feedDislikeCount: Map<string, number>;
 }
 
 /** 话题条目（名称 + 权重） */
@@ -62,9 +63,12 @@ export class ProfileService {
       readTitles: [],
       likedTitles: [],
       dislikedTitles: [],
+      feedReadCounts: new Map<string, number>(),
       feedDurations: new Map<string, number[]>(),
-      feedDislikeCounts: new Map<string, number>(),
-      readTimestamps: []
+      feedLikeCounts: new Map<string, number>(),
+      readTimestamps: [],
+      recExposureCount: 0,
+      recHitCount: 0
     };
 
     const feedCount = new Map<string, number>();
@@ -127,12 +131,17 @@ export class ProfileService {
       } else if (action === 'RATE') {
         if (extra === '👍' && title && title !== '-') {
           stats.likedTitles.push(title);
-        } else if (extra === '👎' && title && title !== '-') {
-          stats.dislikedTitles.push(title);
           if (feed && feed !== '-') {
-            stats.feedDislikeCounts.set(feed, (stats.feedDislikeCounts.get(feed) ?? 0) + 1);
+            stats.feedLikeCounts.set(feed, (stats.feedLikeCounts.get(feed) ?? 0) + 1);
           }
+        } else if (extra === '👎' && title && title !== '-') {
+          // 点踩仅表示不喜欢该文章，不对订阅源建负反馈
+          stats.dislikedTitles.push(title);
         }
+      } else if (action === 'REC_EXPOSURE') {
+        stats.recExposureCount++;
+      } else if (action === 'AI_REC_HIT') {
+        stats.recHitCount++;
       }
     }
 
@@ -146,6 +155,9 @@ export class ProfileService {
     });
     feedEntries.sort((a, b) => b[1] - a[1]);
     stats.topFeeds = feedEntries.slice(0, 3).map(entry => entry[0]);
+
+    // 保存完整的来源阅读计数（供 aggregateStats 使用）
+    stats.feedReadCounts = feedCount;
 
     const seenKeywords = new Set<string>();
     const uniqueKeywords: string[] = [];
@@ -202,16 +214,17 @@ export class ProfileService {
     const feedCount = new Map<string, number>();
     const feedStar = new Map<string, number>();
     const feedDurationAll = new Map<string, number[]>();
-    const feedDislike = new Map<string, number>();
+    const feedLike = new Map<string, number>();
     let totalDuration = 0;
     let durationCount = 0;
 
     const keywordCount = new Map<string, number>();
 
     for (const d of dailyStatsList) {
-      for (const feed of d.topFeeds) {
-        feedCount.set(feed, (feedCount.get(feed) ?? 0) + 1);
-      }
+      // 使用完整的来源阅读计数（而非仅 Top3 名称）
+      d.feedReadCounts.forEach((cnt, feed) => {
+        feedCount.set(feed, (feedCount.get(feed) ?? 0) + cnt);
+      });
       for (const feed of d.starFeeds) {
         feedStar.set(feed, (feedStar.get(feed) ?? 0) + 1);
       }
@@ -231,8 +244,9 @@ export class ProfileService {
       for (const kw of d.topKeywords) {
         keywordCount.set(kw, (keywordCount.get(kw) ?? 0) + 1);
       }
-      d.feedDislikeCounts.forEach((cnt, feed) => {
-        feedDislike.set(feed, (feedDislike.get(feed) ?? 0) + cnt);
+      // 聚合 RATE 👍 次数
+      d.feedLikeCounts.forEach((cnt, feed) => {
+        feedLike.set(feed, (feedLike.get(feed) ?? 0) + cnt);
       });
     }
 
@@ -245,20 +259,20 @@ export class ProfileService {
       }
     });
 
-    // 计算信号强度（含阅读时长加权和负面反馈惩罚）
+    // 计算信号强度（含阅读时长加权、正负反馈）
     const feedSignals = new Map<string, number>();
     feedCount.forEach((count, feed) => {
       const starCount = feedStar.get(feed) ?? 0;
       const avgDur = feedAvgDuration.get(feed) ?? 0;
-      const dislike = feedDislike.get(feed) ?? 0;
-      const signal = InterestCalculator.calcSignal(count, starCount, dailyStatsList.length, avgDur, dislike);
+      const like = feedLike.get(feed) ?? 0;
+      const signal = InterestCalculator.calcSignal(count, starCount, dailyStatsList.length, avgDur, like);
       feedSignals.set(feed, signal);
     });
     feedStar.forEach((starCount, feed) => {
       if (!feedCount.has(feed)) {
         const avgDur = feedAvgDuration.get(feed) ?? 0;
-        const dislike = feedDislike.get(feed) ?? 0;
-        const signal = InterestCalculator.calcSignal(0, starCount, dailyStatsList.length, avgDur, dislike);
+        const like = feedLike.get(feed) ?? 0;
+        const signal = InterestCalculator.calcSignal(0, starCount, dailyStatsList.length, avgDur, like);
         feedSignals.set(feed, signal);
       }
     });
@@ -280,8 +294,7 @@ export class ProfileService {
       feedSignals: feedSignals,
       avgReadDuration: avgDuration,
       topKeywords: topKeywords,
-      feedAvgDuration: feedAvgDuration,
-      feedDislikeCount: feedDislike
+      feedAvgDuration: feedAvgDuration
     };
     return result;
   }
@@ -321,6 +334,9 @@ export class ProfileService {
       if (dailyStatsList.length === 0) {
         return;
       }
+
+      // 按日期升序排序，确保 slice(-7) 取到的是最近 7 天
+      dailyStatsList.sort((a, b) => a.date.localeCompare(b.date));
 
       // 聚合统计
       const aggregated = this.aggregateStats(dailyStatsList);
@@ -386,6 +402,23 @@ export class ProfileService {
         }
       }
 
+      // 本地话题提取降级：无 AI 或 AI 未返回话题时，用本地频次统计
+      if (topicWeights.length === 0 && allReadTitles.length >= 3) {
+        const localTopics = TopicExtractor.extractFromTitles(allReadTitles, 12);
+        const merged = TopicExtractor.mergeWithSearchKeywords(localTopics, aggregated.topKeywords);
+        topicWeights = merged.map((t): InterestWeight => {
+          const iw: InterestWeight = {
+            key: t.name,
+            weight: Math.round(t.weight * 1000) / 1000,
+            updatedAt: today
+          };
+          return iw;
+        });
+      }
+
+      // LESSONS 经验沉淀：将推荐命中率追踪写入 LESSONS.md
+      await this.updateLessonsTracking(memSvc, today, recHitRate, recentStats);
+
       const profileContent = this.buildProfileMarkdown({
         generatedAt: today,
         totalReadDays: aggregated.totalReadDays,
@@ -435,7 +468,7 @@ export class ProfileService {
     feedEntries.sort((a, b) => b[1] - a[1]);
     feedRanking = feedEntries.slice(0, 10).map(e => `${e[0]}: ${e[1].toFixed(3)}`).join(', ');
 
-    const userPrompt = `请分析以下用户阅读数据，生成画像洞察。
+    const userPrompt = `请分析以下用户阅读数据，重点从文章内容和标题中提取用户的兴趣话题。
 
 ## 用户灵魂档案
 ${soul.trim() || '（未设置）'}
@@ -446,7 +479,6 @@ ${soul.trim() || '（未设置）'}
 - 日均阅读: ${aggregated.avgDailyRead} 篇
 - 平均时长: ${aggregated.avgReadDuration} 秒
 - 推荐命中率: ${recHitRate >= 0 ? (recHitRate * 100).toFixed(0) + '%' : '暂无数据'}
-- 订阅源偏好: ${feedRanking || '暂无'}
 - 搜索关键词: ${aggregated.topKeywords.join('、') || '暂无'}
 
 ## 最近 7 天已读文章标题
@@ -466,7 +498,7 @@ ${dislikedList}
   "dislikePatterns": "用户不感兴趣的内容模式描述"
 }
 
-topics 提取 5-8 个话题关键词，weight 范围 0-1。`;
+重要：topics 是推荐系统的核心数据，请从文章标题和内容中深入提取 8-12 个具体话题关键词（如"大模型"、"量化交易"、"Rust"），不要提取来源/网站名称。weight 范围 0-1，反映用户的兴趣程度。`;
 
     const response = await AIService.getInstance().chat(
       Constants.AI_PROFILE_SYSTEM_PROMPT,
@@ -503,7 +535,7 @@ topics 提取 5-8 个话题关键词，weight 范围 0-1。`;
         }
       }
       return {
-        topics: topics.slice(0, 8),
+        topics: topics.slice(0, 12),
         trend: String(parsed['trend'] ?? ''),
         style: String(parsed['style'] ?? ''),
         dislikePatterns: String(parsed['dislikePatterns'] ?? '')
@@ -519,10 +551,16 @@ topics 提取 5-8 个话题关键词，weight 范围 0-1。`;
    * 返回 -1 表示无数据
    */
   private calcRecommendationHitRate(recentStats: DailyStats[]): number {
-    // AI_REC_HIT 行为记录在日志中，但 DailyStats 未直接统计
-    // 简化处理：返回 -1 表示暂无数据，由 AI 综合时标注
-    // 后续可通过在 DailyStats 中增加 recHitCount 来精确计算
-    return -1;
+    let totalExposure = 0;
+    let totalHit = 0;
+    for (const d of recentStats) {
+      totalExposure += d.recExposureCount;
+      totalHit += d.recHitCount;
+    }
+    if (totalExposure <= 0) {
+      return -1;
+    }
+    return totalHit / totalExposure;
   }
 
   /**
@@ -579,49 +617,168 @@ topics 提取 5-8 个话题关键词，weight 范围 0-1。`;
    * 构建用户画像 Markdown 内容
    */
   buildProfileMarkdown(profile: UserProfile): string {
-    const lines: string[] = [
-      `# 阅读画像`,
-      ``,
-      `> 生成时间：${profile.generatedAt}`,
-      ``,
-      `## 阅读概览`,
-      ``,
-      `| 指标 | 数值 |`,
-      `|------|------|`,
-      `| 累计阅读天数 | ${profile.totalReadDays} 天 |`,
-      `| 累计阅读文章 | ${profile.totalArticles} 篇 |`,
-      `| 日均阅读 | ${profile.avgDailyRead} 篇 |`,
-      `| 平均阅读时长 | ${DateUtil.formatDuration(profile.avgReadDuration)} |`,
-      `| 偏好阅读时段 | ${profile.preferredReadTime} |`,
-      ``,
-      `## 订阅源偏好`,
-      ``,
-      InterestCalculator.serializeToMarkdown(profile.feedInterests),
-    ];
+    const parts: string[] = [];
+
+    parts.push(`# 阅读画像`);
+    parts.push(``);
+    parts.push(`> 生成时间：${profile.generatedAt}`);
+    parts.push(``);
+    parts.push(`## 阅读概览`);
+    parts.push(``);
+    parts.push(`| 指标 | 数值 |`);
+    parts.push(`|------|------|`);
+    parts.push(`| 累计阅读天数 | ${profile.totalReadDays} 天 |`);
+    parts.push(`| 累计阅读文章 | ${profile.totalArticles} 篇 |`);
+    parts.push(`| 日均阅读 | ${profile.avgDailyRead} 篇 |`);
+    parts.push(`| 平均阅读时长 | ${DateUtil.formatDuration(profile.avgReadDuration)} |`);
+    parts.push(`| 偏好阅读时段 | ${profile.preferredReadTime} |`);
+    parts.push(``);
+    parts.push(`## 订阅源偏好`);
+    parts.push(``);
+    parts.push(InterestCalculator.serializeToMarkdown(profile.feedInterests).trimEnd());
+    parts.push(``);
 
     if (profile.topicInterests.length > 0) {
-      lines.push(`## 话题偏好`, ``, InterestCalculator.serializeToMarkdown(profile.topicInterests));
+      parts.push(`## 话题偏好`);
+      parts.push(``);
+      parts.push(InterestCalculator.serializeToMarkdown(profile.topicInterests).trimEnd());
+      parts.push(``);
     }
 
     if (profile.searchKeywords && profile.searchKeywords.length > 0) {
-      lines.push(`## 搜索兴趣`, ``,
-        `近期高频搜索：${profile.searchKeywords.join('、')}`, ``);
+      parts.push(`## 搜索兴趣`);
+      parts.push(``);
+      parts.push(`近期高频搜索：${profile.searchKeywords.join('、')}`);
+      parts.push(``);
     }
 
     // AI 洞察章节
     if (profile.aiInsight || profile.readingStyle || profile.dislikePatterns) {
-      lines.push(`## AI 洞察`, ``);
+      parts.push(`## AI 洞察`);
+      parts.push(``);
       if (profile.readingStyle) {
-        lines.push(`**阅读风格**：${profile.readingStyle}`, ``);
+        parts.push(`阅读风格：${profile.readingStyle}`);
+        parts.push(``);
       }
       if (profile.aiInsight) {
-        lines.push(`**兴趣变化**：${profile.aiInsight}`, ``);
+        parts.push(`兴趣变化：${profile.aiInsight}`);
+        parts.push(``);
       }
       if (profile.dislikePatterns) {
-        lines.push(`**不感兴趣的内容**：${profile.dislikePatterns}`, ``);
+        parts.push(`不感兴趣的内容：${profile.dislikePatterns}`);
+        parts.push(``);
       }
     }
 
-    return lines.join('\n');
+    return parts.join('\n');
+  }
+
+  /**
+   * 日内轻量刷新：仅更新订阅源偏好章节（patch 模式），不触发 AI
+   * 若 patch 失败则降级为 regenerate()
+   */
+  async quickRefresh(): Promise<void> {
+    const memSvc = MemoryService.getInstance();
+    if (!memSvc.isReady()) {
+      return;
+    }
+    try {
+      const today = DateUtil.today();
+      const logPath = `${memSvc.getFilesDir()}/${Constants.MEMORY_DAILY_DIR}/${today}.md`;
+      const todayLog = await MemoryFileHelper.readMarkdown(logPath);
+      if (!todayLog.trim()) {
+        return;
+      }
+
+      const todayStats = this.parseDailyLog(todayLog, today);
+      if (todayStats.readCount === 0) {
+        return;
+      }
+
+      // 仅用今日数据构建 feedSignals
+      const feedSignals = new Map<string, number>();
+      todayStats.feedReadCounts.forEach((count, feed) => {
+        const starCount = todayStats.starFeeds.includes(feed) ? 1 : 0;
+        const like = todayStats.feedLikeCounts.get(feed) ?? 0;
+        const signal = InterestCalculator.calcSignal(count, starCount, 1, 0, like);
+        feedSignals.set(feed, signal);
+      });
+
+      // 读取现有画像
+      const existingProfile = await memSvc.getProfile();
+      const existingWeights = this.parseExistingWeights(existingProfile);
+      const updatedWeights = InterestCalculator.update(existingWeights, feedSignals, today);
+
+      // 尝试 patch 订阅源偏好章节
+      const feedSectionNew = InterestCalculator.serializeToMarkdown(updatedWeights).trimEnd();
+      const sectionHeader = '## 订阅源偏好';
+      const headerIdx = existingProfile.indexOf(sectionHeader);
+
+      if (headerIdx >= 0) {
+        // 找到下一个 ## 章节的起始位置
+        const afterHeader = existingProfile.indexOf('\n', headerIdx);
+        let nextSectionIdx = existingProfile.indexOf('\n## ', afterHeader);
+        if (nextSectionIdx < 0) {
+          nextSectionIdx = existingProfile.length;
+        }
+        const before = existingProfile.substring(0, afterHeader + 1);
+        const after = existingProfile.substring(nextSectionIdx);
+        const patched = `${before}\n${feedSectionNew}\n${after}`;
+        await memSvc.updateProfile(patched);
+        RecommendService.getInstance().clearProfileCache();
+        console.info('ProfileService', 'quickRefresh patch done');
+      } else {
+        // 章节不存在，降级为全量重建
+        console.warn('ProfileService', 'quickRefresh: section not found, falling back to regenerate');
+        await this.regenerate();
+      }
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      console.warn('ProfileService', `quickRefresh failed, falling back: ${msg}`);
+      try {
+        await this.regenerate();
+      } catch (regen) {
+        console.error('ProfileService', `quickRefresh fallback regenerate failed: ${String(regen)}`);
+      }
+    }
+  }
+
+  /**
+   * 更新 LESSONS.md 的推荐效果追踪表
+   */
+  private async updateLessonsTracking(
+    memSvc: MemoryService,
+    today: string,
+    hitRate: number,
+    recentStats: DailyStats[]
+  ): Promise<void> {
+    try {
+      let totalExposure = 0;
+      let totalHit = 0;
+      for (const d of recentStats) {
+        totalExposure += d.recExposureCount;
+        totalHit += d.recHitCount;
+      }
+
+      const lessonsContent = await memSvc.getLessons();
+      const hitRateStr = hitRate >= 0 ? `${(hitRate * 100).toFixed(1)}%` : '-';
+      const newRow = `| ${today} | ${hitRateStr} | ${totalExposure} | ${totalHit} |`;
+
+      // 在推荐效果追踪表末尾追加一行
+      const tableEndMarker = '|------|--------|--------|--------|';
+      const markerIdx = lessonsContent.indexOf(tableEndMarker);
+      if (markerIdx >= 0) {
+        const insertPos = markerIdx + tableEndMarker.length;
+        const before = lessonsContent.substring(0, insertPos);
+        const after = lessonsContent.substring(insertPos);
+        // 避免同一天重复追加
+        if (!after.includes(`| ${today} |`)) {
+          const updated = `${before}\n${newRow}${after}`;
+          await memSvc.updateLessons(updated);
+        }
+      }
+    } catch (e) {
+      console.warn('ProfileService', `updateLessonsTracking failed: ${String(e)}`);
+    }
   }
 }

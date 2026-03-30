@@ -148,4 +148,26 @@ export class SettingsService {
   async setAIModelName(name: string): Promise<void> {
     await this.setSetting(Constants.PREF_AI_MODEL_NAME, name);
   }
+
+  // ===== 简报偏好 =====
+
+  async getBriefingCount(): Promise<number> {
+    if (!this.prefs) return Constants.DEFAULT_BRIEFING_COUNT;
+    const v = await this.prefs.get(Constants.PREF_BRIEFING_COUNT, Constants.DEFAULT_BRIEFING_COUNT);
+    return typeof v === 'number' ? v : Constants.DEFAULT_BRIEFING_COUNT;
+  }
+
+  async setBriefingCount(count: number): Promise<void> {
+    await this.setSetting(Constants.PREF_BRIEFING_COUNT, count);
+  }
+
+  async getAutoBriefingEnabled(): Promise<boolean> {
+    if (!this.prefs) return Constants.DEFAULT_AUTO_BRIEFING;
+    const v = await this.prefs.get(Constants.PREF_AUTO_BRIEFING, Constants.DEFAULT_AUTO_BRIEFING);
+    return typeof v === 'boolean' ? v : Constants.DEFAULT_AUTO_BRIEFING;
+  }
+
+  async setAutoBriefingEnabled(enabled: boolean): Promise<void> {
+    await this.setSetting(Constants.PREF_AUTO_BRIEFING, enabled);
+  }
 }

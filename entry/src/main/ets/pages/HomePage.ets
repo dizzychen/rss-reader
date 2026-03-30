@@ -6,6 +6,7 @@ import { MemoryService } from '../service/MemoryService';
 import { SettingsService } from '../service/SettingsService';
 import { RecommendService } from '../service/RecommendService';
 import { AIService } from '../service/AIService';
+import { BriefingService } from '../service/BriefingService';
 import { Constants } from '../constants/Constants';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
 
@@ -31,6 +32,7 @@ export struct HomePage {
   private exposedArticleIds: Map<number, string> = new Map();
   private tabController: TabsController = new TabsController();
   private isFullReloading: boolean = false; // 防止并发 loadArticles(true)
+  private sortModeReady: boolean = false; // sortMode 是否已从持久化恢复完毕
 
   /** 获取当前 Tab 对应的文章列表 */
   private getCurrentArticles(): Article[] {
@@ -48,8 +50,20 @@ export struct HomePage {
 
   aboutToAppear() {
     this.loadAISettings();
-    this.loadSortMode();
-    this.loadArticles();
+    // 必须先恢复 sortMode，再加载文章，否则推荐模式下角标不会生成
+    this.initLoad();
+  }
+
+  /**
+   * 初始化加载：先恢复排序模式，再加载文章列表
+   * 解决 loadSortMode 和 loadArticles 并行导致推荐角标缺失的竞态问题
+   */
+  private async initLoad() {
+    await this.loadSortMode();
+    this.sortModeReady = true;
+    // fullReloadTick > 0 说明在等待 sortMode 期间后台刷新已完成，
+    // 直接用 reset=true 加载最新数据即可
+    this.loadArticles(true);
   }
 
   async loadAISettings() {
@@ -90,6 +104,11 @@ export struct HomePage {
 
   onFullReloadTickChanged() {
     // 后台刷新完成后，完整重新加载文章列表
+    // 必须等 sortMode 恢复完毕，否则推荐模式下会错误地以"最新"模式加载（无角标）
+    if (!this.sortModeReady) {
+      console.info('HomePage', 'onFullReloadTickChanged: sortMode 未就绪，延迟到 initLoad 完成后自动加载');
+      return;
+    }
     this.loadArticles(true);
   }
 
@@ -193,6 +212,22 @@ export struct HomePage {
           this.exposedArticleIds.set(item.id, item.feedTitle ?? '');
         }
       }
+      // 推荐模式下批量记录 REC_EXPOSURE（同一会话同一文章只计一次）
+      if (this.sortMode === Constants.SORT_MODE_RECOMMEND) {
+        const now = Date.now();
+        for (let i = 0; i < items.length; i++) {
+          const item = items[i];
+          if (item.id !== undefined) {
+            MemoryService.getInstance().recordBehavior({
+              timestamp: now,
+              action: 'REC_EXPOSURE',
+              articleId: item.id,
+              articleTitle: item.title,
+              feedTitle: item.feedTitle
+            });
+          }
+        }
+      }
       if (this.sortMode === Constants.SORT_MODE_LATEST) {
         this.pageOffset += items.length;
         this.hasMore = items.length >= this.pageSize;
@@ -286,6 +321,8 @@ export struct HomePage {
     this.isRefreshing = true;
     try {
       const newCount = await FeedRefreshService.getInstance().refreshAll(this.getUIContext().getHostContext()!);
+      // 手动刷新后清除画像缓存，确保推荐评分使用最新画像（角标及时生成）
+      RecommendService.getInstance().clearProfileCache();
       await this.loadArticles(true);
       const msg = newCount > 0 ? `已更新 ${newCount} 篇新文章` : '暂无新内容';
       this.getUIContext().getPromptAction().showToast({ message: msg });
@@ -324,7 +361,6 @@ export struct HomePage {
       action: 'RATE',
       articleId: article.id,
       articleTitle: article.title,
-      feedTitle: article.feedTitle,
       score: -1
     });
     const articles = this.getCurrentArticles();
@@ -369,7 +405,7 @@ export struct HomePage {
           .fontSize(14)
           .fontColor($r('sys.color.ohos_id_color_text_secondary'))
           .margin({ left: 4, right: 4 })
-        // 每日简报按钮（若开启）
+        // 每日简报入口按钮（若开启）
         if (this.briefingEnabled) {
           Button('简报')
             .fontSize(13)
@@ -576,6 +612,14 @@ export struct HomePage {
                   onTap: () => {
                     if (article.id !== undefined) {
                       this.exposedArticleIds.delete(article.id);
+                      // 记录推荐命中
+                      MemoryService.getInstance().recordBehavior({
+                        timestamp: Date.now(),
+                        action: 'AI_REC_HIT',
+                        articleId: article.id,
+                        articleTitle: article.title,
+                        feedTitle: article.feedTitle
+                      });
                     }
                     this.getUIContext().getRouter().pushUrl({
                       url: 'pages/ArticleDetailPage',

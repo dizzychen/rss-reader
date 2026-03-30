@@ -17,6 +17,8 @@ struct AISettingsPage {
   @State isSaving: boolean = false;
   @State briefingEnabled: boolean = true;
   @State aiSortEnabled: boolean = false;
+  @State briefingCountIndex: number = 1; // 默认 5 篇（索引 1）
+  @State autoBriefingEnabled: boolean = true;
   @State loaded: boolean = false;
 
   aboutToAppear() {
@@ -28,6 +30,10 @@ struct AISettingsPage {
       this.apiKey = await SettingsService.getInstance().getAIApiKey();
       this.briefingEnabled = await SettingsService.getInstance().getBriefingEnabled();
       this.aiSortEnabled = await SettingsService.getInstance().getAISortEnabled();
+
+      const briefingCount = await SettingsService.getInstance().getBriefingCount();
+      const bcIdx = Constants.BRIEFING_COUNT_OPTIONS.indexOf(briefingCount);
+      this.briefingCountIndex = bcIdx >= 0 ? bcIdx : 1;
 
       const provider = await SettingsService.getInstance().getAIProvider();
       const idx = Constants.AI_PROVIDER_KEYS.indexOf(provider);
@@ -291,6 +297,22 @@ struct AISettingsPage {
                   })
               }
               .width('100%').height(60).padding({ left: 16, right: 16 })
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
+              Row() {
+                Text('简报推荐数量')
+                  .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary')).layoutWeight(1)
+                Select(Constants.BRIEFING_COUNT_LABELS.map((l: string): SelectOption => ({ value: l })))
+                  .selected(this.briefingCountIndex)
+                  .value(Constants.BRIEFING_COUNT_LABELS[this.briefingCountIndex])
+                  .onSelect((index: number) => {
+                    this.briefingCountIndex = index;
+                    SettingsService.getInstance().setBriefingCount(Constants.BRIEFING_COUNT_OPTIONS[index]);
+                  })
+                  .font({ size: 14 })
+              }
+              .width('100%').height(52).padding({ left: 16, right: 16 })
             }
             .backgroundColor($r('sys.color.ohos_id_color_background'))
             .borderRadius(12)

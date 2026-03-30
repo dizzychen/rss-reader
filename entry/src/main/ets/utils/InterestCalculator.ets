@@ -1,12 +1,38 @@
 // EMA 兴趣权重计算器
 import { InterestWeight } from '../model/Models';
 import { Constants } from '../constants/Constants';
+import { DateUtil } from './DateUtil';
 
 export class InterestCalculator {
 
   /**
-   * 使用 EMA（指数移动平均）更新兴趣权重
+   * 计算两个日期之间的天数差
+   */
+  private static daysBetween(dateA: string, dateB: string): number {
+    const a = new Date(dateA).getTime();
+    const b = new Date(dateB).getTime();
+    if (isNaN(a) || isNaN(b)) {
+      return 0;
+    }
+    return Math.abs(b - a) / (24 * 3600 * 1000);
+  }
+
+  /**
+   * 根据天数获取离散分档衰减因子（对齐 OpenClaw V2）
+   */
+  private static getDecayFactor(daysSinceUpdate: number): number {
+    for (const bracket of Constants.DECAY_BRACKETS) {
+      if (daysSinceUpdate <= bracket[0]) {
+        return bracket[1];
+      }
+    }
+    return 0.1;
+  }
+
+  /**
+   * 使用 EMA（指数移动平均）更新兴趣权重，支持时间感知离散分档衰减
    * 公式：newWeight = α × signal + (1-α) × oldWeight
+   * 无信号 key：weight × getDecayFactor(daysSinceUpdate)，加等级封顶
    *
    * @param existing 已有权重列表
    * @param signals  新信号（key -> 信号强度 [0,1]）
@@ -33,11 +59,10 @@ export class InterestCalculator {
         const newWeight = alpha * signal + (1 - alpha) * existing_item.weight;
         result.set(key, {
           key: key,
-          weight: Math.round(newWeight * 1000) / 1000,  // 保留3位小数
+          weight: Math.round(newWeight * 1000) / 1000,
           updatedAt: date
         });
       } else {
-        // 新 key，直接使用信号值作为初始权重
         result.set(key, {
           key: key,
           weight: Math.round(signal * 1000) / 1000,
@@ -46,14 +71,24 @@ export class InterestCalculator {
       }
     });
 
-    // 对没有新信号的 key 进行衰减（乘以 1-α）
+    // 对没有新信号的 key 进行时间感知离散分档衰减
     result.forEach((iw, key) => {
       if (!signals.has(key)) {
-        const decayed = (1 - alpha) * iw.weight;
+        const daysSince = InterestCalculator.daysBetween(iw.updatedAt, date);
+        const decayFactor = InterestCalculator.getDecayFactor(daysSince);
+        let decayed = iw.weight * decayFactor;
+
+        // 等级封顶：7d+ 权重上限 0.3，14d+ 强制归档 0.05
+        if (daysSince > 14) {
+          decayed = Math.min(decayed, Constants.DECAY_CAP_14D);
+        } else if (daysSince > 7) {
+          decayed = Math.min(decayed, Constants.DECAY_CAP_7D);
+        }
+
         result.set(key, {
           key: iw.key,
           weight: Math.round(decayed * 1000) / 1000,
-          updatedAt: iw.updatedAt
+          updatedAt: iw.updatedAt  // 保留原始更新时间（无新信号不刷新）
         });
       }
     });
@@ -76,11 +111,11 @@ export class InterestCalculator {
    * @param starCount    收藏次数
    * @param totalDays    计算周期天数（归一化分母）
    * @param avgDuration  该源平均阅读时长（秒），0 表示无数据
-   * @param dislikeCount 用户主动标记不感兴趣的次数
+   * @param likeCount    用户主动标记有价值的次数（RATE 👍，权重 5×）
    * @returns 信号强度 [0, 1]
    */
   static calcSignal(readCount: number, starCount: number, totalDays: number,
-    avgDuration: number = 0, dislikeCount: number = 0): number {
+    avgDuration: number = 0, likeCount: number = 0): number {
     if (totalDays <= 0) {
       return 0;
     }
@@ -90,9 +125,8 @@ export class InterestCalculator {
     } else if (avgDuration > 0 && avgDuration < 30) {
       durationFactor = 0.5;
     }
-    const dislikePenalty = dislikeCount > 0 ? Math.pow(0.5, dislikeCount) : 1.0;
-    const score = (readCount * durationFactor + starCount * 3) / totalDays;
-    return (1 / (1 + Math.exp(-score + 2))) * dislikePenalty;
+    const score = (readCount * durationFactor + starCount * 3 + likeCount * 5) / totalDays;
+    return (1 / (1 + Math.exp(-score + 2)));
   }
 
   /**

@@ -286,6 +286,47 @@ export class DatabaseHelper {
     return map;
   }
 
+  /** 查询全部未读文章总数 */
+  async getUnreadCount(): Promise<number> {
+    if (!this.rdbStore) return 0;
+    const predicates = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+    predicates.equalTo('is_read', 0);
+    const result = await this.rdbStore.query(predicates, ['id']);
+    const count = result.rowCount;
+    result.close();
+    return count;
+  }
+
+  /** 查询今日已读文章数 */
+  async getTodayReadCount(): Promise<number> {
+    if (!this.rdbStore) return 0;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const sql = `SELECT COUNT(*) AS cnt FROM ${Constants.TABLE_ARTICLES} WHERE is_read = 1 AND cached_at >= ?`;
+    const result = await this.rdbStore.querySql(sql, [todayStart.getTime().toString()]);
+    let count = 0;
+    if (result.goToNextRow()) {
+      count = result.getLong(result.getColumnIndex('cnt'));
+    }
+    result.close();
+    return count;
+  }
+
+  /** 查询今日收藏文章数 */
+  async getTodayStarCount(): Promise<number> {
+    if (!this.rdbStore) return 0;
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const sql = `SELECT COUNT(*) AS cnt FROM ${Constants.TABLE_ARTICLES} WHERE is_starred = 1 AND cached_at >= ?`;
+    const result = await this.rdbStore.querySql(sql, [todayStart.getTime().toString()]);
+    let count = 0;
+    if (result.goToNextRow()) {
+      count = result.getLong(result.getColumnIndex('cnt'));
+    }
+    result.close();
+    return count;
+  }
+
   private rowToFeed(result: relationalStore.ResultSet): Feed {
     return {
       id: result.getLong(result.getColumnIndex('id')),

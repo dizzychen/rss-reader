@@ -6,6 +6,7 @@ import { MePage } from './MePage';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { SettingsService } from '../service/SettingsService';
 import { FeedRefreshService } from '../service/FeedRefreshService';
+import { common } from '@kit.AbilityKit';
 
 @Entry
 @Component
@@ -19,10 +20,20 @@ struct Index {
   @State meRefreshTick: number = 0;
   // 完整重载触发器：后台刷新完成后需要重新加载文章列表（区别于状态同步）
   @State homeFullReloadTick: number = 0;
+  // 通知点击事件回调引用，用于注销时保持引用一致
+  private notificationTapHandler: () => void = () => this.handleNotificationTap();
 
   aboutToAppear() {
-    // 确保数据库和设置服务已初始化完毕再渲染页面
+    // 获取 UIAbilityContext（用于 EventHub 注册和数据库初始化）
     const ctx = this.getUIContext().getHostContext();
+
+    // 注册 EventHub 监听：通知点击后触发首页刷新
+    if (ctx) {
+      (ctx as common.UIAbilityContext).eventHub.on('notification_tap', this.notificationTapHandler);
+      console.info('Index', 'EventHub: notification_tap 监听已注册');
+    }
+
+    // 确保数据库和设置服务已初始化完毕再渲染页面
     if (!ctx) {
       this.dbReady = true;
       return;
@@ -41,6 +52,26 @@ struct Index {
       // 即便失败也显示页面，避免白屏
       this.dbReady = true;
     });
+  }
+
+  aboutToDisappear(): void {
+    // 注销 EventHub 监听，避免内存泄漏
+    const ctx = this.getUIContext().getHostContext();
+    if (ctx) {
+      (ctx as common.UIAbilityContext).eventHub.off('notification_tap', this.notificationTapHandler);
+      console.info('Index', 'EventHub: notification_tap 监听已注销');
+    }
+  }
+
+  /**
+   * 通知点击事件处理：切到首页 Tab + 触发完整重载
+   */
+  private handleNotificationTap(): void {
+    console.info('Index', '收到通知点击事件，切换到首页并刷新数据');
+    // 切到首页 Tab
+    this.currentIndex = 0;
+    // 触发首页完整重载（拉取最新文章列表）
+    this.homeFullReloadTick++;
   }
 
   onPageShow(): void {

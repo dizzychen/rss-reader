@@ -497,11 +497,14 @@ ${articleSummaries}`;
   }
 
   /**
-   * 生成每日简报
+   * 生成每日简报（结构化 JSON 输出）
+   * @param articles 待分析的文章列表
+   * @param briefingCount 推荐文章数量（默认 5）
+   * @returns AI 返回的原始 JSON 字符串（由 BriefingService 解析）
    */
-  async generateBriefing(articles: Article[]): Promise<string> {
+  async generateBriefing(articles: Article[], briefingCount: number = 5): Promise<string> {
     if (!this.hasApiKey() || articles.length === 0) {
-      return '暂无数据可生成简报';
+      throw new Error('未配置 API Key 或无文章可分析');
     }
 
     try {
@@ -513,39 +516,43 @@ ${articleSummaries}`;
       for (let i = 0; i < maxArticles; i++) {
         const a = articles[i];
         const summary = (a.summary || '').substring(0, 100);
-        articleList += `${i + 1}. **${a.title}**\n   来源：${a.feedTitle ?? '未知'}\n   摘要：${summary}\n\n`;
+        const pubTime = a.publishedAt > 0 ? new Date(a.publishedAt).toLocaleString() : '未知时间';
+        articleList += `${i + 1}. ${a.title}\n   来源：${a.feedTitle ?? '未知'}\n   发布：${pubTime}\n   摘要：${summary}\n\n`;
       }
 
       const systemPrompt = context
         ? `你是我的私人阅读助手，了解我的阅读偏好。\n\n${context}`
         : '你是一个智能阅读助手。';
 
-      const userPrompt = `今天是 ${today}，请从以下文章中为我筛选出 3-5 篇最值得阅读的内容，生成一份简洁的每日简报。
+      const userPrompt = `今天是 ${today}，请从以下 ${maxArticles} 篇文章中为我筛选内容，生成带时间轴的结构化简报。
 
-格式要求：
-- 直接输出纯文本，不要使用任何 Markdown 语法（不要使用 **、#、- 等符号）
-- 开头用一句话概括今日资讯主题（20字以内）
-- 每条新闻格式：序号、标题、一句话概述（30字内）、来源
-- 条目之间空一行
-- 结尾一句今日阅读建议
+要求：
+1. 选出 ${briefingCount} 篇最值得阅读的文章作为推荐
+2. 选出 2-3 篇可以跳过的文章并说明理由
+3. 用一句话概括今日资讯主题（20字以内）
+4. 每条推荐标注推荐等级：high（强烈推荐）、medium（值得一看）、low（可选阅读）
+5. 生成一条时间轴，按时间段（早晨/上午/中午/下午/傍晚/晚间/深夜）梳理今日要闻脉络，每个时段选1条最重要的新闻
 
-示例格式：
-今日聚焦：科技与商业
+请严格输出以下 JSON 格式，不要输出其他内容：
+{
+  "summary": "今日资讯主题概括（20字以内）",
+  "recommended": [
+    {"index": 1, "title": "文章标题", "source": "来源", "reason": "推荐理由（20字内）", "level": "high"}
+  ],
+  "skippable": [
+    {"index": 3, "title": "文章标题", "reason": "跳过理由（15字内）"}
+  ],
+  "timeline": [
+    {"time": "上午", "headline": "要闻标题", "brief": "一句话概括（25字内）", "index": 1}
+  ]
+}
 
-1. 苹果发布新款 MacBook Pro
-搭载 M4 芯片，性能大幅提升，续航达 24 小时。
-来源：36氪
+index 是文章在下方列表中的序号（从1开始）。timeline 按时间从早到晚排列，只保留有重要新闻的时段（3-5条即可）。
 
-2. 特斯拉股价创新高
-受益于自动驾驶技术突破，市值突破万亿美元。
-来源：华尔街日报
-
-今日建议：关注科技巨头动态，把握行业趋势。
-
-今日文章（共${articles.length}篇）：
+文章列表（共${maxArticles}篇）：
 ${articleList}`;
 
-      return await this.chat(systemPrompt, userPrompt, 800);
+      return await this.chat(systemPrompt, userPrompt, Constants.BRIEFING_MAX_TOKENS);
     } catch (e) {
       const msg = AIService.extractErrMsg(e);
       console.error('AIService', `generateBriefing failed: ${msg}`);
@@ -577,10 +584,15 @@ ${articleList}`;
 内容：${content}
 
 请提供：
-1. **文章总结**（100字以内概括全文）
-2. **核心观点**（2-3条要点）`;
+1. **文章总结**（60字以内，1段）
+2. **核心观点**（仅1-2条，每条不超过12字，禁止展开解释）
 
-      return await this.chat(systemPrompt, userPrompt, 400);
+输出要求：
+- 先给“文章总结”
+- 再给“核心观点”
+- 全文简洁、避免套话和重复`;
+
+      return await this.chat(systemPrompt, userPrompt, 300);
     } catch (e) {
       const msg = AIService.extractErrMsg(e);
       console.error('AIService', `analyzeArticle failed: ${msg}`);
@@ -622,10 +634,15 @@ ${articleList}`;
 内容：${content}
 
 请提供：
-1. **文章总结**（100字以内概括全文）
-2. **核心观点**（2-3条要点）`;
+1. **文章总结**（60字以内，1段）
+2. **核心观点**（仅1-2条，每条不超过12字，禁止展开解释）
 
-      await this.chatStream(systemPrompt, userPrompt, 400, onChunk, onDone, onError);
+输出要求：
+- 先给“文章总结”
+- 再给“核心观点”
+- 全文简洁、避免套话和重复`;
+
+      await this.chatStream(systemPrompt, userPrompt, 300, onChunk, onDone, onError);
     } catch (e) {
       const msg = AIService.extractErrMsg(e);
       console.error('AIService', `analyzeArticleStream failed: ${msg}`);

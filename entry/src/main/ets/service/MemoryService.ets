@@ -9,9 +9,14 @@ import { MarkdownUtil } from '../utils/MarkdownUtil';
 
 // 延迟导入 ProfileService 的回调，由 EntryAbility 注入，避免循环依赖
 let profileRegenerateCallback: (() => Promise<void>) | null = null;
+let profileQuickRefreshCallback: (() => Promise<void>) | null = null;
 
 export function setProfileRegenerateCallback(cb: () => Promise<void>): void {
   profileRegenerateCallback = cb;
+}
+
+export function setProfileQuickRefreshCallback(cb: () => Promise<void>): void {
+  profileQuickRefreshCallback = cb;
 }
 
 export class MemoryService {
@@ -27,6 +32,11 @@ export class MemoryService {
   private aiRankCache: number[] = [];           // 排序后的 articleId 数组
   private aiRankCacheTime: number = 0;          // 缓存时间戳
 
+  // 日内阅读计数器（内存变量，不持久化，用于触发 quickRefresh）
+  private todayReadCount: number = 0;
+  private todayReadDate: string = '';           // 当前计数对应的日期
+  private quickRefreshTriggered: boolean = false; // 本日是否已触发过 quickRefresh
+
   static getInstance(): MemoryService {
     if (!MemoryService.instance) {
       MemoryService.instance = new MemoryService();
@@ -40,7 +50,7 @@ export class MemoryService {
    * @param soulTemplate SOUL.md 模板内容（由 EntryAbility 从 rawfile 读取后传入）
    * @param profileTemplate PROFILE.md 模板内容（由 EntryAbility 从 rawfile 读取后传入）
    */
-  async init(context: common.Context, soulTemplate: string = '', profileTemplate: string = ''): Promise<void> {
+  async init(context: common.Context, soulTemplate: string = '', profileTemplate: string = '', lessonsTemplate: string = ''): Promise<void> {
     if (this.initialized) {
       return;
     }
@@ -66,7 +76,7 @@ export class MemoryService {
       }
 
       // 首次使用时写入模板（仅在文件不存在时）
-      await this.initializeFromTemplates(soulTemplate, profileTemplate);
+      await this.initializeFromTemplates(soulTemplate, profileTemplate, lessonsTemplate);
 
       this.initialized = true;
       console.info('MemoryService', 'init success, filesDir=' + this.filesDir);
@@ -85,9 +95,10 @@ export class MemoryService {
    *
    * 参照 OpenClaw 三层记忆架构设计。
    */
-  private async initializeFromTemplates(soulTemplate: string, _profileTemplate: string): Promise<void> {
+  private async initializeFromTemplates(soulTemplate: string, _profileTemplate: string, lessonsTemplate: string = ''): Promise<void> {
     const soulPath = `${this.filesDir}/${Constants.MEMORY_SOUL_FILE}`;
     const profilePath = `${this.filesDir}/${Constants.MEMORY_PROFILE_FILE}`;
+    const lessonsPath = `${this.filesDir}/${Constants.MEMORY_LESSONS_FILE}`;
 
     // ===== SOUL.md：用户手动编辑的灵魂档案 =====
     // 仅在文件不存在时从模板初始化，后续用户修改不会被覆盖
@@ -121,6 +132,24 @@ export class MemoryService {
     } else {
       console.info('MemoryService', 'PROFILE.md 已存在，由 ProfileService 管理');
     }
+
+    // ===== LESSONS.md：经验教训层 =====
+    // 仅在文件不存在时从模板初始化
+    const lessonsExists = await MemoryFileHelper.exists(lessonsPath);
+    console.info('MemoryService', `LESSONS.md exists=${lessonsExists}, path=${lessonsPath}`);
+    if (!lessonsExists) {
+      try {
+        const content = lessonsTemplate.trim()
+          ? lessonsTemplate
+          : `# 阅读经验\n\n> 系统将根据阅读行为自动沉淀经验教训。\n\n## 成功模式 🎯\n\n## 反模式 🚫\n\n## 推荐优化 ⚡\n\n## 推荐效果追踪\n\n| 日期 | 命中率 | 曝光数 | 点击数 |\n|------|--------|--------|--------|\n`;
+        await MemoryFileHelper.writeMarkdown(lessonsPath, content);
+        console.info('MemoryService', 'LESSONS.md 首次初始化');
+      } catch (e) {
+        console.error('MemoryService', `LESSONS.md 写入失败: ${String(e)}`);
+      }
+    } else {
+      console.info('MemoryService', 'LESSONS.md 已存在');
+    }
   }
 
   /**
@@ -147,6 +176,30 @@ export class MemoryService {
       return;
     }
     this.behaviorQueue.push(behavior);
+
+    // 日内阅读计数 + quickRefresh 触发
+    if (behavior.action === 'READ') {
+      const today = DateUtil.today();
+      if (this.todayReadDate !== today) {
+        this.todayReadCount = 0;
+        this.todayReadDate = today;
+        this.quickRefreshTriggered = false;
+      }
+      this.todayReadCount++;
+      if (!this.quickRefreshTriggered && this.todayReadCount >= Constants.QUICK_REFRESH_THRESHOLD) {
+        this.quickRefreshTriggered = true;
+        // 异步触发，不阻塞当前行为记录
+        if (profileQuickRefreshCallback) {
+          profileQuickRefreshCallback().then(() => {
+            // quickRefresh 后清除推荐缓存，下次加载首页使用最新画像
+            this.clearAIRankCache();
+            console.info('MemoryService', 'quickRefresh triggered and caches cleared');
+          }).catch((e: Error) => {
+            console.warn('MemoryService', `quickRefresh callback failed: ${e.message}`);
+          });
+        }
+      }
+    }
 
     // 清除已有定时器，重置防抖
     if (this.flushTimer !== -1) {
@@ -285,6 +338,28 @@ export class MemoryService {
     await MemoryFileHelper.writeMarkdown(`${this.filesDir}/${Constants.MEMORY_PROFILE_FILE}`, content);
   }
 
+  // ===== LESSONS 操作 =====
+
+  /**
+   * 读取经验教训 Markdown 内容
+   */
+  async getLessons(): Promise<string> {
+    if (!this.initialized) {
+      return '';
+    }
+    return MemoryFileHelper.readMarkdown(`${this.filesDir}/${Constants.MEMORY_LESSONS_FILE}`);
+  }
+
+  /**
+   * 更新经验教训（写入 Markdown）
+   */
+  async updateLessons(content: string): Promise<void> {
+    if (!this.initialized) {
+      return;
+    }
+    await MemoryFileHelper.writeMarkdown(`${this.filesDir}/${Constants.MEMORY_LESSONS_FILE}`, content);
+  }
+
   // ===== 每日维护 =====
 
   /**
@@ -357,9 +432,15 @@ export class MemoryService {
     try {
       const soul = await this.getSoul();
       const profile = await this.getProfile();
+      const lessons = await this.getLessons();
       const today = DateUtil.today();
+      const yesterday = DateUtil.daysAgo(1);
+
       const todayLog = await MemoryFileHelper.readMarkdown(
         `${this.filesDir}/${Constants.MEMORY_DAILY_DIR}/${today}.md`
+      );
+      const yesterdayLog = await MemoryFileHelper.readMarkdown(
+        `${this.filesDir}/${Constants.MEMORY_DAILY_DIR}/${yesterday}.md`
       );
 
       const parts: string[] = [];
@@ -372,12 +453,27 @@ export class MemoryService {
         parts.push(`## 我的阅读画像\n${profile.trim()}`);
       }
 
-      if (todayLog.trim()) {
-        const logLines = todayLog.split('\n').slice(0, 50).join('\n');
-        parts.push(`## 今日阅读行为\n${logLines}`);
+      // 今日+昨日双日结构化行为摘要（替代原始日志前50行）
+      const todaySummary = this.buildDaySummary(todayLog, today);
+      const yesterdaySummary = this.buildDaySummary(yesterdayLog, yesterday);
+      if (todaySummary || yesterdaySummary) {
+        let summaryText = '## 近日阅读行为摘要\n';
+        if (todaySummary) {
+          summaryText += `### 今日 (${today})\n${todaySummary}\n`;
+        }
+        if (yesterdaySummary) {
+          summaryText += `### 昨日 (${yesterday})\n${yesterdaySummary}\n`;
+        }
+        parts.push(summaryText.trimEnd());
       }
 
-      // 提取画像中的 AI 洞察摘要（话题、风格、不感兴趣模式）供排序/简报使用
+      // LESSONS 经验教训
+      if (lessons.trim() && lessons.trim() !== '# 阅读经验') {
+        const lessonsSnippet = lessons.substring(0, 2000);
+        parts.push(`## 阅读经验教训\n${lessonsSnippet}`);
+      }
+
+      // 提取画像中的 AI 洞察摘要
       const insightSummary = this.extractProfileInsights(profile);
       if (insightSummary) {
         parts.push(`## 个性化摘要\n${insightSummary}`);
@@ -389,6 +485,99 @@ export class MemoryService {
       console.error('MemoryService', `buildAIContext failed: ${msg}`);
       return '';
     }
+  }
+
+  /**
+   * 构建单日结构化行为摘要
+   */
+  private buildDaySummary(logContent: string, date: string): string {
+    if (!logContent.trim()) {
+      return '';
+    }
+    let readCount = 0;
+    let starCount = 0;
+    let searchCount = 0;
+    const feedCounts = new Map<string, number>();
+    const keywords: string[] = [];
+    const timestamps: string[] = [];
+
+    const lines = logContent.split('\n');
+    for (const line of lines) {
+      if (!line.startsWith('| ') || line.startsWith('| 时间') || line.startsWith('|---')) {
+        continue;
+      }
+      const parts = line.split('|').map(s => s.trim()).filter(s => s.length > 0);
+      if (parts.length < 4) {
+        continue;
+      }
+      const time = parts[0];
+      const action = parts[1];
+      const feed = parts[3];
+      const extra = parts.length >= 5 ? parts[4] : '-';
+
+      if (action === 'READ') {
+        readCount++;
+        if (feed && feed !== '-') {
+          feedCounts.set(feed, (feedCounts.get(feed) ?? 0) + 1);
+        }
+        if (time) {
+          timestamps.push(time);
+        }
+      } else if (action === 'STAR') {
+        starCount++;
+      } else if (action === 'SEARCH') {
+        searchCount++;
+        if (extra && extra !== '-') {
+          keywords.push(extra);
+        }
+      }
+    }
+
+    if (readCount === 0 && starCount === 0) {
+      return '';
+    }
+
+    const summaryParts: string[] = [];
+    summaryParts.push(`- 阅读 ${readCount} 篇，收藏 ${starCount} 篇`);
+
+    // Top3 来源
+    const feedEntries: Array<[string, number]> = [];
+    feedCounts.forEach((cnt, name) => feedEntries.push([name, cnt]));
+    feedEntries.sort((a, b) => b[1] - a[1]);
+    if (feedEntries.length > 0) {
+      const top3 = feedEntries.slice(0, 3).map(e => `${e[0]}(${e[1]}篇)`).join('、');
+      summaryParts.push(`- 高频来源：${top3}`);
+    }
+
+    if (keywords.length > 0) {
+      const kwSet = new Set<string>(keywords);
+      const uniqueKws: string[] = [];
+      kwSet.forEach((kw) => {
+        if (uniqueKws.length < 5) {
+          uniqueKws.push(kw);
+        }
+      });
+      summaryParts.push(`- 搜索关键词：${uniqueKws.join('、')}`);
+    }
+
+    // 阅读时段分布
+    if (timestamps.length > 0) {
+      const periods: Record<string, number> = { '早(6-12)': 0, '午(12-18)': 0, '晚(18-24)': 0, '凌晨(0-6)': 0 };
+      for (const ts of timestamps) {
+        const h = parseInt(ts.split(':')[0], 10);
+        if (isNaN(h)) continue;
+        if (h < 6) periods['凌晨(0-6)']++;
+        else if (h < 12) periods['早(6-12)']++;
+        else if (h < 18) periods['午(12-18)']++;
+        else periods['晚(18-24)']++;
+      }
+      const activePeriods = Object.entries(periods).filter(e => e[1] > 0).map(e => `${e[0]}${e[1]}篇`);
+      if (activePeriods.length > 0) {
+        summaryParts.push(`- 时段：${activePeriods.join('、')}`);
+      }
+    }
+
+    return summaryParts.join('\n');
   }
 
   /**
@@ -425,6 +614,43 @@ export class MemoryService {
   clearAIRankCache(): void {
     this.aiRankCache = [];
     this.aiRankCacheTime = 0;
+  }
+
+  // ===== 简报缓存 =====
+
+  /**
+   * 读取当日简报缓存
+   * @param date YYYY-MM-DD
+   */
+  async readBriefingCache(date: string): Promise<string> {
+    if (!this.initialized) return '';
+    const path = `${this.filesDir}/${Constants.BRIEFING_CACHE_PREFIX}${date}.json`;
+    try {
+      return await MemoryFileHelper.readMarkdown(path);
+    } catch {
+      return '';
+    }
+  }
+
+  /**
+   * 写入简报缓存
+   * @param date YYYY-MM-DD
+   * @param json 序列化后的 JSON 字符串
+   */
+  async writeBriefingCache(date: string, json: string): Promise<void> {
+    if (!this.initialized) return;
+    const path = `${this.filesDir}/${Constants.BRIEFING_CACHE_PREFIX}${date}.json`;
+    await MemoryFileHelper.writeMarkdown(path, json);
+  }
+
+  /**
+   * 检查当日简报缓存是否存在
+   * @param date YYYY-MM-DD
+   */
+  async briefingCacheExists(date: string): Promise<boolean> {
+    if (!this.initialized) return false;
+    const path = `${this.filesDir}/${Constants.BRIEFING_CACHE_PREFIX}${date}.json`;
+    return MemoryFileHelper.exists(path);
   }
 
   // ===== 数据管理 =====
@@ -479,9 +705,10 @@ export class MemoryService {
       return;
     }
     try {
-      // 删除 SOUL 和 PROFILE
+      // 删除 SOUL、PROFILE 和 LESSONS
       await MemoryFileHelper.deleteFile(`${this.filesDir}/${Constants.MEMORY_SOUL_FILE}`);
       await MemoryFileHelper.deleteFile(`${this.filesDir}/${Constants.MEMORY_PROFILE_FILE}`);
+      await MemoryFileHelper.deleteFile(`${this.filesDir}/${Constants.MEMORY_LESSONS_FILE}`);
 
       // 删除所有日志文件
       const dailyDir = `${this.filesDir}/${Constants.MEMORY_DAILY_DIR}`;

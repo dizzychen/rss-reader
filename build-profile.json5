@@ -5,13 +5,13 @@
         "name": "default",
         "type": "HarmonyOS",
         "material": {
-          "storeFile": "/Users/dizzychen/DevEcoStudioProjects/RssReader/docs/deploy/airss.p12",
-          "storePassword": "0000001ABEA0D1624B34B8A41FA1AE8F1077B8E11E19FCFCD80EAE6BF9422739B479AFFFB94AEABEFAB4",
-          "keyAlias": "airss",
-          "keyPassword": "0000001A62F23AA44B16D0153F9F289FCDBE77C6E58BFA2107E7404B49DD42CC31EBBA1A8291B727A267",
-          "signAlg": "SHA256withECDSA",
+          "certpath": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.cer",
+          "keyAlias": "debugKey",
+          "keyPassword": "00000019102E89DE52C4A66A033C01232D191F02125F96DDB3AAE678F9BAAF855DAF4A888C75ADFCED",
           "profile": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.p7b",
-          "certpath": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.cer"
+          "signAlg": "SHA256withECDSA",
+          "storeFile": "/Users/dizzychen/.ohos/config/default_RssReader_gCUytm9Z5FH4OQitBD7Jj0hf1D80sgY1Suq9eQdT4u4=.p12",
+          "storePassword": "00000019D8A16C065F5FCD9A0669A640CD0130EE4DF187E5B90B4578FAE02FB3783537435A74178C69"
         }
       },
       {
@@ -20,18 +20,18 @@
         "material": {
           "certpath": "/Users/dizzychen/DevEcoStudioProjects/RssReader/docs/deploy/airss.cer",
           "keyAlias": "airss",
-          "keyPassword": "0000001A62F23AA44B16D0153F9F289FCDBE77C6E58BFA2107E7404B49DD42CC31EBBA1A8291B727A267",
+          "keyPassword": "0000001AEE8D89DA6F66474C96C608BDEA2E5398E4FC354CBC5D08A687802C86984F98AE4EDF54BBAC08",
           "profile": "/Users/dizzychen/DevEcoStudioProjects/RssReader/docs/deploy/AIRSSRelease.p7b",
           "signAlg": "SHA256withECDSA",
           "storeFile": "/Users/dizzychen/DevEcoStudioProjects/RssReader/docs/deploy/airss.p12",
-          "storePassword": "0000001ABEA0D1624B34B8A41FA1AE8F1077B8E11E19FCFCD80EAE6BF9422739B479AFFFB94AEABEFAB4"
+          "storePassword": "0000001ADD02BEF9D1438A5209103518C1709F91BE8E7D471E81F198EACF793FA55DB4AA477B8A9B522F"
         }
       }
     ],
     "products": [
       {
         "name": "default",
-        "signingConfig": "release",
+        "signingConfig": "default",
         "targetSdkVersion": "6.0.2(22)",
         "compatibleSdkVersion": "6.0.0(20)",
         "runtimeOS": "HarmonyOS",

@@ -5,7 +5,7 @@ import { util } from '@kit.ArkTS';
 import { notificationManager } from '@kit.NotificationKit';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { SettingsService } from '../service/SettingsService';
-import { MemoryService, setProfileRegenerateCallback } from '../service/MemoryService';
+import { MemoryService, setProfileRegenerateCallback, setProfileQuickRefreshCallback } from '../service/MemoryService';
 import { ProfileService } from '../service/ProfileService';
 import { AIService } from '../service/AIService';
 import { DateUtil } from '../utils/DateUtil';
@@ -14,6 +14,9 @@ import { WorkSchedulerManager } from '../service/WorkSchedulerManager';
 const DOMAIN = 0x0000;
 
 export default class EntryAbility extends UIAbility {
+  // 暂存冷启动时的通知来源标记，等 onWindowStageCreate 页面就绪后再 emit
+  private pendingNotificationTap: boolean = false;
+
   async onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): Promise<void> {
     try {
       this.context.getApplicationContext().setColorMode(ConfigurationConstant.ColorMode.COLOR_MODE_NOT_SET);
@@ -21,6 +24,11 @@ export default class EntryAbility extends UIAbility {
       hilog.error(DOMAIN, 'RSSReader', 'Failed to set colorMode. Cause: %{public}s', JSON.stringify(err));
     }
     hilog.info(DOMAIN, 'RSSReader', '%{public}s', 'Ability onCreate');
+    // 冷启动：检查是否来自通知点击，暂存标记（页面尚未加载，不能直接 emit）
+    if (want?.parameters?.from === 'notification') {
+      hilog.info(DOMAIN, 'RSSReader', '冷启动来自通知点击，暂存标记');
+      this.pendingNotificationTap = true;
+    }
     // 初始化数据库
     await DatabaseHelper.getInstance().init(this.context);
     // 初始化设置
@@ -28,9 +36,11 @@ export default class EntryAbility extends UIAbility {
     // 初始化记忆系统（预加载 rawfile 模板，确保首次启动时写入沙箱目录）
     const soulTemplate = await this.loadRawfileAsString('memory/SOUL.md');
     const profileTemplate = await this.loadRawfileAsString('memory/PROFILE.md');
-    await MemoryService.getInstance().init(this.context, soulTemplate, profileTemplate);
+    const lessonsTemplate = await this.loadRawfileAsString('memory/LESSONS.md');
+    await MemoryService.getInstance().init(this.context, soulTemplate, profileTemplate, lessonsTemplate);
     // 注入 ProfileService.regenerate 回调，避免 MemoryService 与 ProfileService 循环依赖
     setProfileRegenerateCallback(() => ProfileService.getInstance().regenerate());
+    setProfileQuickRefreshCallback(() => ProfileService.getInstance().quickRefresh());
     // 加载 AI API Key
     const apiKey = await SettingsService.getInstance().getAIApiKey();
     if (apiKey) {
@@ -113,6 +123,14 @@ export default class EntryAbility extends UIAbility {
         return;
       }
       hilog.info(DOMAIN, 'RSSReader', 'Succeeded in loading the content.');
+      // 页面加载完毕，如果是通知冷启动，延迟 emit 确保 Index aboutToAppear 已注册监听
+      if (this.pendingNotificationTap) {
+        this.pendingNotificationTap = false;
+        setTimeout(() => {
+          this.context.eventHub.emit('notification_tap');
+          hilog.info(DOMAIN, 'RSSReader', '冷启动通知事件已发送: notification_tap');
+        }, 300);
+      }
     });
 
     // 请求通知权限（首次会弹窗，用户选择后不再弹窗）
@@ -138,6 +156,19 @@ export default class EntryAbility extends UIAbility {
 
   onWindowStageDestroy(): void {
     hilog.info(DOMAIN, 'RSSReader', '%{public}s', 'Ability onWindowStageDestroy');
+  }
+
+  /**
+   * 热启动：应用已在后台（singleton），用户点击通知时系统调用此方法
+   * 此时页面已加载，可直接通过 EventHub 通知 Index 刷新数据
+   */
+  onNewWant(want: Want, _launchParam: AbilityConstant.LaunchParam): void {
+    hilog.info(DOMAIN, 'RSSReader', 'Ability onNewWant, from=%{public}s',
+      String(want?.parameters?.from ?? 'unknown'));
+    if (want?.parameters?.from === 'notification') {
+      this.context.eventHub.emit('notification_tap');
+      hilog.info(DOMAIN, 'RSSReader', '热启动通知事件已发送: notification_tap');
+    }
   }
 
   onForeground(): void {

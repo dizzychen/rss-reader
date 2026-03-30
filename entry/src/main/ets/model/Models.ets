@@ -69,7 +69,7 @@ export interface AppSettings {
 // ===== 记忆系统数据模型 =====
 
 /** 用户行为动作枚举 */
-export type BehaviorAction = 'READ' | 'READ_END' | 'STAR' | 'UNSTAR' | 'SKIP' | 'SEARCH' | 'RATE' | 'AI_REC_HIT';
+export type BehaviorAction = 'READ' | 'READ_END' | 'STAR' | 'UNSTAR' | 'SKIP' | 'SEARCH' | 'RATE' | 'AI_REC_HIT' | 'REC_EXPOSURE';
 
 /** 单条用户行为记录 */
 export interface UserBehavior {
@@ -98,9 +98,12 @@ export interface DailyStats {
   readTitles: string[];     // 已读文章标题（供 AI 话题提取）
   likedTitles: string[];    // 用户标记正面的文章标题
   dislikedTitles: string[]; // 用户标记负面的文章标题
+  feedReadCounts: Map<string, number>;   // 每个订阅源的阅读篇数（完整统计，非仅 Top3）
   feedDurations: Map<string, number[]>; // 每个订阅源的阅读时长列表（秒）
-  feedDislikeCounts: Map<string, number>; // 每个订阅源被标记"不感兴趣"的次数
+  feedLikeCounts: Map<string, number>;    // 每个订阅源被标记"有价值"的次数（RATE 👍）
   readTimestamps: string[]; // READ 行为时间戳（HH:MM 格式，用于时段分析）
+  recExposureCount: number;  // 推荐模式下曝光文章数（REC_EXPOSURE 统计）
+  recHitCount: number;       // 推荐模式下被点击阅读的文章数（AI_REC_HIT 统计）
 }
 
 /** 兴趣权重条目 */
@@ -124,4 +127,69 @@ export interface UserProfile {
   readingStyle: string;         // 阅读风格标签
   dislikePatterns: string;      // 不感兴趣的内容模式
   searchKeywords: string[];     // 高频搜索关键词
+}
+
+// ===== 简报数据模型 =====
+
+/** 简报摘要信息（供首页预览卡片使用） */
+export interface BriefingSummaryInfo {
+  summary: string;
+  count: number;
+}
+
+/** 简报推荐等级 */
+export type BriefingLevel = 'high' | 'medium' | 'low';
+
+/** 简报推荐文章条目 */
+export interface BriefingItem {
+  articleId: number;       // 映射后的数据库文章 ID
+  title: string;           // 文章标题
+  source: string;          // 来源名
+  reason: string;          // 推荐理由（一句话）
+  level: BriefingLevel;    // 推荐等级
+}
+
+/** 简报可跳过文章条目 */
+export interface BriefingSkipItem {
+  articleId: number;       // 映射后的数据库文章 ID
+  title: string;           // 文章标题
+  reason: string;          // 跳过理由
+}
+
+/** 时间轴条目 */
+export interface TimelineEntry {
+  time: string;            // 时间段（如 "上午"、"下午"、"晚间"）
+  headline: string;        // 该时段要闻标题
+  brief: string;           // 一句话概括
+  articleId: number;       // 关联文章 ID（-1 表示无关联）
+}
+
+/** 完整简报数据 */
+export interface BriefingData {
+  summary: string;         // AI 一句话概览
+  recommended: BriefingItem[];
+  skippable: BriefingSkipItem[];
+  timeline: TimelineEntry[];  // 时间轴
+  generatedAt: string;     // 生成时间 YYYY-MM-DD HH:mm
+  articleCount: number;    // 分析的文章总数
+}
+
+// ===== 经验教训数据模型 =====
+
+/** 经验教训类型 */
+export type LessonCategory = 'success' | 'anti' | 'optimization';
+
+/** 单条经验教训 */
+export interface LessonEntry {
+  id: string;                   // 唯一标识（如 "success_001"）
+  category: LessonCategory;     // 分类：成功模式 / 反模式 / 推荐优化
+  title: string;                // 标题（三级标题内容）
+  discovered: string;           // 发现日期 YYYY-MM-DD
+  context: string;              // 上下文描述
+  pattern: string;              // 模式/问题描述
+  reason: string;               // 原因分析/解决方案
+  hitCount: number;             // 命中/成功次数（反馈追踪）
+  missCount: number;            // 未命中/失败次数（反馈追踪）
+  confidence: number;           // 置信度 = hitCount / (hitCount + missCount)
+  lastUpdated: string;          // 最后更新日期 YYYY-MM-DD
 }

@@ -20,6 +20,13 @@ export interface RecommendResult {
   totalCount: number;     // 评分结果总数（供分页使用）
 }
 
+interface RecommendWeights {
+  content: number;
+  topic: number;
+  freshness: number;
+  feed: number;
+}
+
 export class RecommendService {
   private static instance: RecommendService;
   private profileCache: ProfileCache | null = null;
@@ -65,29 +72,32 @@ export class RecommendService {
       return { articles: sliced, totalCount: sorted.length };
     }
 
-    // 三维度加权评分
+    // 四维度加权评分（内容驱动）
+    const weights = this.getEffectiveWeights();
     for (const article of articles) {
       const feedTitle = feedMap.get(article.feedId) ?? article.feedTitle ?? '';
       const feedScore = this.calcFeedScore(feedTitle);
       const freshnessScore = this.calcFreshnessScore(article.publishedAt);
       const topicScore = this.calcTopicScore(article.title);
+      const contentScore = this.calcContentScore(article.summary);
 
       const totalScore =
-        Constants.W_FEED * feedScore +
-        Constants.W_FRESHNESS * freshnessScore +
-        Constants.W_TOPIC * topicScore;
+        weights.topic * topicScore +
+        weights.content * contentScore +
+        weights.freshness * freshnessScore +
+        weights.feed * feedScore;
 
       article.recommendScore = Math.round(totalScore * 1000) / 1000;
 
-      // 确定推荐理由：取贡献最大的维度
-      const feedContrib = Constants.W_FEED * feedScore;
-      const freshContrib = Constants.W_FRESHNESS * freshnessScore;
-      const topicContrib = Constants.W_TOPIC * topicScore;
+      // 确定推荐理由：取贡献最大的内容维度
+      const topicContrib = weights.topic * topicScore;
+      const contentContrib = weights.content * contentScore;
+      const freshContrib = weights.freshness * freshnessScore;
 
-      if (feedContrib >= freshContrib && feedContrib >= topicContrib && feedScore > 0.1) {
-        article.recommendReason = '常读来源';
-      } else if (topicContrib >= feedContrib && topicContrib >= freshContrib && topicScore > 0.1) {
+      if (topicContrib >= contentContrib && topicContrib >= freshContrib && topicScore > 0.1) {
         article.recommendReason = '话题匹配';
+      } else if (contentContrib >= topicContrib && contentContrib >= freshContrib && contentScore > 0.1) {
+        article.recommendReason = '内容相关';
       } else {
         article.recommendReason = '最新发布';
       }
@@ -159,6 +169,37 @@ export class RecommendService {
   }
 
   // ==================== 私有方法 ====================
+
+  /**
+   * 获取生效权重：若配置异常则回退默认值，保障排序稳定性
+   */
+  private getEffectiveWeights(): RecommendWeights {
+    const configured: RecommendWeights = {
+      content: Constants.W_CONTENT,
+      topic: Constants.W_TOPIC,
+      freshness: Constants.W_FRESHNESS,
+      feed: Constants.W_FEED
+    };
+
+    const isEachValid = configured.content >= 0 && configured.content <= 1 &&
+      configured.topic >= 0 && configured.topic <= 1 &&
+      configured.freshness >= 0 && configured.freshness <= 1 &&
+      configured.feed >= 0 && configured.feed <= 1;
+
+    const sum = configured.content + configured.topic + configured.freshness + configured.feed;
+    if (isEachValid && Math.abs(sum - 1.0) <= Constants.W_SUM_EPSILON) {
+      return configured;
+    }
+
+    const fallback: RecommendWeights = {
+      content: Constants.W_DEFAULT_CONTENT,
+      topic: Constants.W_DEFAULT_TOPIC,
+      freshness: Constants.W_DEFAULT_FRESHNESS,
+      feed: Constants.W_DEFAULT_FEED
+    };
+    console.warn(TAG, `推荐权重配置异常，使用默认值。configuredSum=${sum.toFixed(3)}`);
+    return fallback;
+  }
 
   /**
    * 确保画像缓存已加载且未过期
@@ -239,8 +280,8 @@ export class RecommendService {
     if (!this.profileCache) {
       return true;
     }
-    return this.profileCache.feedWeights.size === 0 &&
-           this.profileCache.topicKeywords.size === 0 &&
+    // 内容驱动：只要有话题或搜索关键词就不算冷启动
+    return this.profileCache.topicKeywords.size === 0 &&
            this.profileCache.searchKeywords.length === 0;
   }
 
@@ -314,6 +355,48 @@ export class RecommendService {
     }
 
     return maxScore;
+  }
+
+  /**
+   * 计算摘要内容匹配分
+   * 对文章摘要（而非标题）进行关键词匹配，扩大内容覆盖面
+   * 使用话题关键词 + 搜索关键词，匹配命中数越多分越高
+   */
+  private calcContentScore(summary: string): number {
+    if (!this.profileCache || !summary) {
+      return 0;
+    }
+
+    const text = summary.substring(0, 200); // 取前 200 字避免过长
+    let hitCount = 0;
+    let totalKeywords = 0;
+
+    // 话题关键词匹配
+    if (this.profileCache.topicKeywords.size > 0) {
+      totalKeywords = this.profileCache.topicKeywords.size;
+      this.profileCache.topicKeywords.forEach((_weight, keyword) => {
+        if (this.matchKeyword(text, keyword)) {
+          hitCount++;
+        }
+      });
+    }
+
+    // 搜索关键词补充匹配
+    if (this.profileCache.searchKeywords.length > 0) {
+      for (const keyword of this.profileCache.searchKeywords) {
+        totalKeywords++;
+        if (this.matchKeyword(text, keyword)) {
+          hitCount++;
+        }
+      }
+    }
+
+    if (totalKeywords === 0 || hitCount === 0) {
+      return 0;
+    }
+
+    // 命中率 × 0.8 + 至少命中 1 个关键词给 0.2 基础分
+    return Math.min(1.0, (hitCount / totalKeywords) * 0.8 + 0.2);
   }
 
   /**

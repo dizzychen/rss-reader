@@ -119,6 +119,13 @@ export class Constants {
   static readonly W_FRESHNESS: number = 0.20;    // 时效性权重
   static readonly W_FEED: number = 0.05;         // 订阅源匹配权重（微调）
 
+  // 推荐权重兜底配置（用于运行时校验失败时回退）
+  static readonly W_DEFAULT_CONTENT: number = 0.45;
+  static readonly W_DEFAULT_TOPIC: number = 0.30;
+  static readonly W_DEFAULT_FRESHNESS: number = 0.20;
+  static readonly W_DEFAULT_FEED: number = 0.05;
+  static readonly W_SUM_EPSILON: number = 0.001; // 权重和校验容差
+
   // 推荐参数
   static readonly RECOMMEND_CACHE_TTL: number = 1800000;   // 画像缓存过期时间（30分钟，ms）
   static readonly RECOMMEND_RECENT_DAYS: number = 7;       // 推荐取文天数
