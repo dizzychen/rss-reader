@@ -584,15 +584,15 @@ ${articleList}`;
 内容：${content}
 
 请提供：
-1. **文章总结**（60字以内，1段）
-2. **核心观点**（仅1-2条，每条不超过12字，禁止展开解释）
+1. 摘要正文（90-140字，2-3句，包含“发生了什么 + 为什么重要/影响 + 结论”）
+2. **核心观点**（1-2条，每条不超过14字）
 
 输出要求：
-- 先给“文章总结”
-- 再给“核心观点”
-- 全文简洁、避免套话和重复`;
+- 第一段直接输出摘要正文，不要写“文章总结”“摘要：”等标签
+- 然后再输出“核心观点”条目
+- 信息要具体，避免空话、套话和重复`;
 
-      return await this.chat(systemPrompt, userPrompt, 300);
+      return await this.chat(systemPrompt, userPrompt, 380);
     } catch (e) {
       const msg = AIService.extractErrMsg(e);
       console.error('AIService', `analyzeArticle failed: ${msg}`);
@@ -634,15 +634,15 @@ ${articleList}`;
 内容：${content}
 
 请提供：
-1. **文章总结**（60字以内，1段）
-2. **核心观点**（仅1-2条，每条不超过12字，禁止展开解释）
+1. 摘要正文（90-140字，2-3句，包含“发生了什么 + 为什么重要/影响 + 结论”）
+2. **核心观点**（1-2条，每条不超过14字）
 
 输出要求：
-- 先给“文章总结”
-- 再给“核心观点”
-- 全文简洁、避免套话和重复`;
+- 第一段直接输出摘要正文，不要写“文章总结”“摘要：”等标签
+- 然后再输出“核心观点”条目
+- 信息要具体，避免空话、套话和重复`;
 
-      await this.chatStream(systemPrompt, userPrompt, 300, onChunk, onDone, onError);
+      await this.chatStream(systemPrompt, userPrompt, 380, onChunk, onDone, onError);
     } catch (e) {
       const msg = AIService.extractErrMsg(e);
       console.error('AIService', `analyzeArticleStream failed: ${msg}`);
