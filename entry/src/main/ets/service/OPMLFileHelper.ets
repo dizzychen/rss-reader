@@ -47,7 +47,14 @@ export class OPMLFileHelper {
       const documentPicker = new picker.DocumentViewPicker(context);
       const saveOptions = new picker.DocumentSaveOptions();
       saveOptions.newFileNames = [filename];
-      saveOptions.fileSuffixChoices = ['.opml', '.xml'];
+      // 根据文件后缀动态设置可选格式
+      if (filename.endsWith('.json')) {
+        saveOptions.fileSuffixChoices = ['.json'];
+      } else if (filename.endsWith('.md')) {
+        saveOptions.fileSuffixChoices = ['.md'];
+      } else {
+        saveOptions.fileSuffixChoices = ['.opml', '.xml'];
+      }
 
       const uris = await documentPicker.save(saveOptions);
 
@@ -117,6 +124,29 @@ export class OPMLFileHelper {
       if (msg === '未选择文件') {
         throw new Error(msg);
       }
+      throw new Error(`选择文件失败: ${msg}`);
+    }
+  }
+
+  /**
+   * 打开系统文件选择器让用户选择 JSON 备份文件
+   */
+  static async selectJSONFile(
+    context: common.UIAbilityContext
+  ): Promise<string> {
+    try {
+      const documentPicker = new picker.DocumentViewPicker(context);
+      const options = new picker.DocumentSelectOptions();
+      options.fileSuffixFilters = ['JSON|.json'];
+      options.maxSelectNumber = 1;
+      const uris = await documentPicker.select(options);
+      if (!uris || uris.length === 0) {
+        throw new Error('未选择文件');
+      }
+      return uris[0];
+    } catch (e) {
+      const msg = e instanceof Error ? e.message : String(e);
+      if (msg === '未选择文件') throw new Error(msg);
       throw new Error(`选择文件失败: ${msg}`);
     }
   }

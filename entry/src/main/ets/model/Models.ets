@@ -38,6 +38,23 @@ export interface Article {
   aiSummary?: string;        // AI 总结缓存
 }
 
+/** Article 浅拷贝工具函数，支持覆盖指定字段 */
+export function copyArticle(src: Article, overrides: Map<string, number | string | undefined> = new Map()): Article {
+  const copy: Article = {
+    id: src.id, feedId: src.feedId, feedTitle: src.feedTitle,
+    guid: src.guid, title: src.title, summary: src.summary,
+    content: src.content, url: src.url, author: src.author,
+    publishedAt: src.publishedAt, isRead: src.isRead,
+    isStarred: src.isStarred, coverImage: src.coverImage, cachedAt: src.cachedAt,
+    recommendScore: src.recommendScore, recommendReason: src.recommendReason,
+    aiSummary: src.aiSummary
+  };
+  if (overrides.has('isRead')) copy.isRead = overrides.get('isRead') as number;
+  if (overrides.has('isStarred')) copy.isStarred = overrides.get('isStarred') as number;
+  if (overrides.has('feedTitle')) copy.feedTitle = overrides.get('feedTitle') as string;
+  return copy;
+}
+
 export interface Tag {
   id?: number;
   name: string;

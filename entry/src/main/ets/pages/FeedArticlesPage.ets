@@ -1,6 +1,6 @@
 // 订阅源文章列表页
 import { router } from '@kit.ArkUI';
-import { Article, Feed } from '../model/Models';
+import { Article, Feed, copyArticle } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedRefreshService } from '../service/FeedRefreshService';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
@@ -23,10 +23,85 @@ struct FeedArticlesPage {
   }
 
   onPageShow(): void {
-    // 从 ArticleDetailPage 返回时刷新已读状态
+    // 从 ArticleDetailPage 返回时，增量同步已读状态并平滑移除已读文章
     if (this.feedId > 0) {
-      this.loadData();
+      this.syncArticleStatus();
     }
+  }
+
+  /**
+   * 增量同步文章状态，当 onlyUnread=true 时平滑移除已读文章
+   */
+  private async syncArticleStatus() {
+    if (this.articles.length === 0) return;
+    try {
+      const ids = this.articles.filter(a => a.id !== undefined).map(a => a.id!);
+      const statusMap = await DatabaseHelper.getInstance().getArticlesStatus(ids);
+      let changed = false;
+      const newlyReadIds = new Set<number>();
+      const updated: Article[] = this.articles.map(a => {
+        const status = a.id !== undefined ? statusMap.get(a.id) : undefined;
+        if (status) {
+          const newRead = status['isRead'] ?? a.isRead;
+          const newStarred = status['isStarred'] ?? a.isStarred;
+          if (newRead !== a.isRead || newStarred !== a.isStarred) {
+            changed = true;
+            if (newRead === 1 && a.isRead === 0 && a.id !== undefined) {
+              newlyReadIds.add(a.id);
+            }
+            const overrides = new Map<string, number | string | undefined>();
+            overrides.set('isRead', newRead);
+            overrides.set('isStarred', newStarred);
+            return copyArticle(a, overrides);
+          }
+        }
+        return a;
+      });
+      if (changed) {
+        if (this.onlyUnread && newlyReadIds.size > 0) {
+          this.articles = updated;
+          setTimeout(() => {
+            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+              this.articles = this.articles.filter(a => !newlyReadIds.has(a.id!));
+            });
+          }, 150);
+        } else {
+          this.articles = updated;
+        }
+      }
+    } catch (e) {
+      console.error('FeedArticlesPage', `syncArticleStatus failed: ${e}`);
+    }
+  }
+
+  /**
+   * 进入详情前先落库已读，并同步当前列表，避免仅未读模式下残留
+   */
+  private async preMarkArticleAsRead(article: Article): Promise<void> {
+    if (article.id === undefined || article.isRead === 1) {
+      return;
+    }
+    try {
+      await DatabaseHelper.getInstance().markRead(article.id, 1);
+    } catch (e) {
+      console.error('FeedArticlesPage', `preMarkArticleAsRead DB update failed: ${e}`);
+    }
+
+    const idx = this.articles.findIndex(a => a.id === article.id);
+    if (idx < 0) {
+      return;
+    }
+
+    if (this.onlyUnread) {
+      this.articles = this.articles.filter(a => a.id !== article.id);
+      return;
+    }
+
+    const target = this.articles[idx];
+    const readOverrides = new Map<string, number | string | undefined>();
+    readOverrides.set('isRead', 1);
+    this.articles[idx] = copyArticle(target, readOverrides);
+    this.articles = [...this.articles];
   }
 
   async loadData() {
@@ -92,7 +167,13 @@ struct FeedArticlesPage {
               value: '确认',
               action: async () => {
                 await DatabaseHelper.getInstance().markAllReadByFeed(this.feedId);
-                await this.loadData();
+                if (this.onlyUnread) {
+                  animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+                    this.articles = [];
+                  });
+                } else {
+                  await this.loadData();
+                }
               }
             },
             secondaryButton: { value: '取消', action: () => {} }
@@ -108,20 +189,28 @@ struct FeedArticlesPage {
 
       Refresh({ refreshing: $$this.isRefreshing }) {
         if (this.articles.length === 0) {
-          Column({ space: 12 }) {
-            Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
-            Button('立即刷新').onClick(() => this.doRefresh())
+          List() {
+            ListItem() {
+              Column({ space: 12 }) {
+                Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                Button('立即刷新').onClick(() => this.doRefresh())
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+            }
           }
           .width('100%')
-          .layoutWeight(1)
-          .justifyContent(FlexAlign.Center)
+          .height('100%')
+          .edgeEffect(EdgeEffect.Spring)
         } else {
           List() {
             ForEach(this.articles, (article: Article) => {
               ListItem() {
                 ArticleItemComponent({
                   article: article,
-                  onTap: () => {
+                  onTap: async () => {
+                    await this.preMarkArticleAsRead(article);
                     this.getUIContext().getRouter().pushUrl({
                       url: 'pages/ArticleDetailPage',
                       params: { articleId: article.id }
@@ -132,14 +221,9 @@ struct FeedArticlesPage {
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
                     const idx = this.articles.findIndex(a => a.id === article.id);
                     if (idx >= 0) {
-                      const updated: Article = {
-                        id: article.id, feedId: article.feedId, feedTitle: article.feedTitle,
-                        guid: article.guid, title: article.title, summary: article.summary,
-                        content: article.content, url: article.url, author: article.author,
-                        publishedAt: article.publishedAt, isRead: article.isRead,
-                        isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt
-                      };
-                      this.articles[idx] = updated;
+                      const starOverrides = new Map<string, number | string | undefined>();
+                      starOverrides.set('isStarred', newStar);
+                      this.articles[idx] = copyArticle(article, starOverrides);
                       this.articles = [...this.articles];
                     }
                   }

@@ -13,7 +13,7 @@
 **/.preview
 /.appanalyzer
 
-# ===== 签名证书与密钥（绝对不能泄露） =====
+# ===== 签名证书与密钥 =====
 *.p12
 *.cer
 *.csr
@@ -27,10 +27,29 @@ material/
 *.app
 *.har
 
-# ===== AI 生成的临时素材 =====
+# ===== 锁文件（自动生成） =====
+oh-package-lock.json5
+
+# ===== macOS =====
+.DS_Store
+
+# ===== 本地脚本与配置 =====
+/run_build.sh
+/scripts/
+
+# ===== AI/工具生成的临时素材 =====
 /generated-icons
 /generated-images
 /ICON_TEST_REPORT.md
+
+# ===== 开发流程管理产物 =====
+/openspec/
+
+# ===== 设计原型 =====
+/docs/demo/
+
+# ===== Claude Code 本地配置 =====
+/.claude/settings.local.json
 
 # ===== CodeBuddy =====
 /.codebuddy

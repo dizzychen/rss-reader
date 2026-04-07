@@ -397,9 +397,38 @@ export class DatabaseHelper {
   }
 
   async getAllArticles(onlyUnread: boolean = false, limit: number = 50, offset: number = 0): Promise<Article[]> {
+    if (!this.rdbStore) return [];
+
+    if (onlyUnread) {
+      const predicates = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+      predicates.equalTo('is_read', 0).orderByDesc('published_at').limitAs(limit).offsetAs(offset);
+      return await this.queryArticles(predicates);
+    }
+
+    // 关闭“仅未读”时优先展示未读，再按时间倒序，避免未读被大量已读挤到后页看起来“消失”
+    const sql = `SELECT id, feed_id, guid, title, summary, content, url,
+      author, published_at, is_read, is_starred, cover_image, cached_at, ai_summary
+      FROM ${Constants.TABLE_ARTICLES}
+      ORDER BY is_read ASC, published_at DESC
+      LIMIT ? OFFSET ?`;
+    return await this.queryArticlesBySql(sql, [limit, offset]);
+  }
+
+  /**
+   * 获取最近 N 天文章（推荐排序专用）
+   * @param days 天数，默认 7 天
+   * @param maxCount 最大数量上限，防止内存过大，默认 200
+   * @param onlyUnread 是否仅查询未读
+   */
+  async getRecentArticles(days: number = 7, maxCount: number = 200, onlyUnread: boolean = false): Promise<Article[]> {
+    if (!this.rdbStore) return [];
+    const cutoffTimestamp = Date.now() - days * 24 * 60 * 60 * 1000;
     const predicates = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
-    if (onlyUnread) predicates.equalTo('is_read', 0);
-    predicates.orderByDesc('published_at').limitAs(limit).offsetAs(offset);
+    predicates.greaterThanOrEqualTo('published_at', cutoffTimestamp);
+    if (onlyUnread) {
+      predicates.and().equalTo('is_read', 0);
+    }
+    predicates.orderByDesc('published_at').limitAs(maxCount);
     return await this.queryArticles(predicates);
   }
 
@@ -409,15 +438,7 @@ export class DatabaseHelper {
    * @param maxCount 最大数量上限，防止内存过大，默认 200
    */
   async getRecentUnreadArticles(days: number = 7, maxCount: number = 200): Promise<Article[]> {
-    if (!this.rdbStore) return [];
-    const cutoffTimestamp = Date.now() - days * 24 * 60 * 60 * 1000;
-    const predicates = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
-    predicates.greaterThanOrEqualTo('published_at', cutoffTimestamp)
-      .and()
-      .equalTo('is_read', 0)
-      .orderByDesc('published_at')
-      .limitAs(maxCount);
-    return await this.queryArticles(predicates);
+    return await this.getRecentArticles(days, maxCount, true);
   }
 
   async getStarredArticles(limit: number = 50, offset: number = 0): Promise<Article[]> {
@@ -541,15 +562,22 @@ export class DatabaseHelper {
 
   async cleanOldCache(feedId: number, keepCount: number): Promise<void> {
     if (!this.rdbStore) return;
-    // 保留最新 keepCount 篇（收藏的不删）
-    const allPred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
-    allPred.equalTo('feed_id', feedId).equalTo('is_starred', 0).orderByDesc('published_at');
-    const result = await this.rdbStore.query(allPred, ['id']);
+    // 优先保留收藏(is_starred=1)和未读(is_read=0)的文章
+    // 仅清理超过 keepCount 限制的、已读且未收藏的文章
+    const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+    pred.equalTo('feed_id', feedId)
+      .equalTo('is_starred', 0)
+      .equalTo('is_read', 1)
+      .orderByDesc('published_at');
+    
+    const result = await this.rdbStore.query(pred, ['id']);
     const ids: number[] = [];
     while (result.goToNextRow()) {
       ids.push(result.getLong(result.getColumnIndex('id')));
     }
     result.close();
+
+    // 如果已读文章总数超过了 keepCount，则删除更旧的
     if (ids.length > keepCount) {
       const toDelete = ids.slice(keepCount);
       for (const id of toDelete) {
@@ -558,14 +586,34 @@ export class DatabaseHelper {
         p.equalTo('id', id);
         await this.rdbStore.delete(p);
       }
+      console.info(TAG, `Cleaned ${toDelete.length} old read articles for feed ${feedId}`);
+    }
+    
+    // 兜底策略：当非收藏文章总量过大时，删除最旧的非收藏文章，防止 DB 撑爆
+    // 阈值至少 500，并随 keepCount 动态增长，避免在较大缓存配置下误删
+    const totalPred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+    totalPred.equalTo('feed_id', feedId).equalTo('is_starred', 0).orderByDesc('published_at');
+    const totalResult = await this.rdbStore.query(totalPred, ['id']);
+    const totalIds: number[] = [];
+    while (totalResult.goToNextRow()) {
+      totalIds.push(totalResult.getLong(totalResult.getColumnIndex('id')));
+    }
+    totalResult.close();
+
+    const maxNonStarredBuffer = Math.max(500, keepCount * 2);
+    if (totalIds.length > maxNonStarredBuffer) {
+      const toDelete = totalIds.slice(maxNonStarredBuffer);
+      for (const id of toDelete) {
+        await this.deleteArticleTags(id);
+        const p = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+        p.equalTo('id', id);
+        await this.rdbStore.delete(p);
+      }
+      console.info(TAG, `Emergency cleaned ${toDelete.length} very old articles for feed ${feedId}`);
     }
   }
 
-  private async queryArticles(predicates: relationalStore.RdbPredicates): Promise<Article[]> {
-    if (!this.rdbStore) return [];
-    const columns = ['id', 'feed_id', 'guid', 'title', 'summary', 'content', 'url',
-      'author', 'published_at', 'is_read', 'is_starred', 'cover_image', 'cached_at', 'ai_summary'];
-    const result = await this.rdbStore.query(predicates, columns);
+  private mapResultSetToArticles(result: relationalStore.ResultSet): Article[] {
     const articles: Article[] = [];
     try {
       while (result.goToNextRow()) {
@@ -590,6 +638,20 @@ export class DatabaseHelper {
       result.close();
     }
     return articles;
+  }
+
+  private async queryArticlesBySql(sql: string, args: Array<number | string>): Promise<Article[]> {
+    if (!this.rdbStore) return [];
+    const result = await this.rdbStore.querySql(sql, args);
+    return this.mapResultSetToArticles(result);
+  }
+
+  private async queryArticles(predicates: relationalStore.RdbPredicates): Promise<Article[]> {
+    if (!this.rdbStore) return [];
+    const columns = ['id', 'feed_id', 'guid', 'title', 'summary', 'content', 'url',
+      'author', 'published_at', 'is_read', 'is_starred', 'cover_image', 'cached_at', 'ai_summary'];
+    const result = await this.rdbStore.query(predicates, columns);
+    return this.mapResultSetToArticles(result);
   }
 
   // ==================== Tag CRUD ====================

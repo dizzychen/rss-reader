@@ -1,13 +1,9 @@
 // 设置页
-import { router } from '@kit.ArkUI';
-import { util } from '@kit.ArkTS';
 import { SettingsService } from '../service/SettingsService';
 import { DatabaseHelper } from '../database/DatabaseHelper';
-import { MemoryService } from '../service/MemoryService';
 import { Constants } from '../constants/Constants';
-import { OPMLService } from '../service/OPMLService';
-import { OPMLFileHelper } from '../service/OPMLFileHelper';
 import { WorkSchedulerManager } from '../service/WorkSchedulerManager';
+import { DataOperationHelper } from '../service/DataOperationHelper';
 import { common } from '@kit.AbilityKit';
 
 interface SelectOption {
@@ -27,6 +23,8 @@ struct SettingsPage {
   @State loaded: boolean = false;
   @State isExporting: boolean = false;
   @State isImporting: boolean = false;
+  @State isBackingUp: boolean = false;
+  @State isRestoring: boolean = false;
   @State bgTaskStatus: string = '检查中...';
 
   aboutToAppear() {
@@ -277,10 +275,56 @@ struct SettingsPage {
             Column() {
               Row() {
                 Column({ space: 2 }) {
-                  Text(this.isExporting ? '导出中...' : '导出订阅源')
+                  Text(this.isBackingUp ? '备份中...' : '完整备份')
+                    .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary'))
+                  Text('将订阅源、分组和所有配置保存为文件')
+                    .fontSize(12).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                }
+                .layoutWeight(1).alignItems(HorizontalAlign.Start)
+                if (this.isBackingUp) {
+                  LoadingProgress().width(20).height(20)
+                } else {
+                  SymbolGlyph($r('sys.symbol.arrow_up'))
+                    .fontSize(18).fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                }
+              }
+              .width('100%').height(60).padding({ left: 16, right: 16 })
+              .opacity(this.isBackingUp ? 0.5 : 1.0)
+              .onClick(() => {
+                if (!this.isBackingUp) this.doFullBackup();
+              })
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
+              Row() {
+                Column({ space: 2 }) {
+                  Text(this.isRestoring ? '恢复中...' : '恢复备份')
+                    .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary'))
+                  Text('从备份文件恢复订阅源和配置')
+                    .fontSize(12).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                }
+                .layoutWeight(1).alignItems(HorizontalAlign.Start)
+                if (this.isRestoring) {
+                  LoadingProgress().width(20).height(20)
+                } else {
+                  SymbolGlyph($r('sys.symbol.arrow_down'))
+                    .fontSize(18).fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                }
+              }
+              .width('100%').height(60).padding({ left: 16, right: 16 })
+              .opacity(this.isRestoring ? 0.5 : 1.0)
+              .onClick(() => {
+                if (!this.isRestoring) this.doRestore();
+              })
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
+              Row() {
+                Column({ space: 2 }) {
+                  Text(this.isExporting ? '导出中...' : '导出订阅源（OPML）')
                     .fontSize(15)
                     .fontColor($r('sys.color.ohos_id_color_text_primary'))
-                  Text('将订阅源保存为 OPML 文件')
+                  Text('兼容其他 RSS 阅读器的标准格式')
                     .fontSize(12)
                     .fontColor($r('sys.color.ohos_id_color_text_secondary'))
                 }
@@ -307,7 +351,7 @@ struct SettingsPage {
 
               Row() {
                 Column({ space: 2 }) {
-                  Text(this.isImporting ? '导入中...' : '导入订阅源')
+                  Text(this.isImporting ? '导入中...' : '导入订阅源（OPML）')
                     .fontSize(15)
                     .fontColor($r('sys.color.ohos_id_color_text_primary'))
                   Text('从 OPML 文件批量添加订阅')
@@ -465,32 +509,41 @@ struct SettingsPage {
       .padding({ left: 4, bottom: 4 })
   }
 
+  private async doFullBackup() {
+    this.isBackingUp = true;
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const r = await DataOperationHelper.getInstance().doFullBackup(ctx);
+      if (!r.cancelled && r.message) {
+        this.getUIContext().getPromptAction().showToast({ message: r.message });
+      }
+    } finally {
+      this.isBackingUp = false;
+    }
+  }
+
+  private async doRestore() {
+    this.isRestoring = true;
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const r = await DataOperationHelper.getInstance().doRestore(ctx);
+      if (!r.cancelled && r.message) {
+        this.getUIContext().getPromptAction().showToast({ message: r.message });
+      }
+      if (r.success) await this.loadSettings();
+    } finally {
+      this.isRestoring = false;
+    }
+  }
+
   private async exportOPML() {
     this.isExporting = true;
     try {
-      const feeds = await DatabaseHelper.getInstance().getAllFeeds();
-      if (feeds.length === 0) {
-        this.getUIContext().getPromptAction().showToast({ message: '没有订阅源可导出' });
-        return;
-      }
-
-      const opmlContent = OPMLService.getInstance().generateOPML(feeds);
-      const filename = OPMLService.getInstance().generateOPMLFilename();
-
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const filePath = await OPMLFileHelper.saveOPMLFile(ctx, opmlContent, filename);
-
-      console.info('SettingsPage', `OPML exported to: ${filePath}`);
-      this.getUIContext().getPromptAction().showToast({
-        message: `导出成功，共 ${feeds.length} 个订阅源`
-      });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg === '用户取消保存') {
-        return;
+      const r = await DataOperationHelper.getInstance().exportOPML(ctx);
+      if (!r.cancelled && r.message) {
+        this.getUIContext().getPromptAction().showToast({ message: r.message });
       }
-      console.error('SettingsPage', `Export OPML failed: ${msg}`);
-      this.getUIContext().getPromptAction().showToast({ message: `导出失败：${msg}` });
     } finally {
       this.isExporting = false;
     }
@@ -500,67 +553,20 @@ struct SettingsPage {
     this.isImporting = true;
     try {
       const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-
-      // 1. 打开文件选择器
-      const fileUri = await OPMLFileHelper.selectOPMLFile(ctx);
-
-      // 2. 读取文件内容
-      const opmlContent = await OPMLFileHelper.readOPMLFile(fileUri);
-
-      // 3. 解析 OPML
-      const items = OPMLService.getInstance().parseOPML(opmlContent);
-      if (items.length === 0) {
-        this.getUIContext().getPromptAction().showToast({ message: '文件中未找到有效的 RSS 订阅' });
-        return;
+      const r = await DataOperationHelper.getInstance().importOPML(ctx);
+      if (!r.cancelled && r.message) {
+        this.getUIContext().getPromptAction().showToast({ message: r.message });
       }
-
-      // 4. 批量导入（使用默认分组 id=1）
-      const result = await OPMLService.getInstance().importFeeds(items, 1);
-
-      // 5. 显示导入结果
-      const total = items.length;
-      let msg = `解析 ${total} 个订阅，成功 ${result.success} 个`;
-      if (result.skipped > 0) {
-        msg += `，跳过 ${result.skipped} 个`;
-      }
-      if (result.failed > 0) {
-        msg += `，失败 ${result.failed} 个`;
-      }
-      this.getUIContext().getPromptAction().showToast({ message: msg });
-
-      if (result.errors.length > 0) {
-        console.warn('SettingsPage', 'OPML import errors:', result.errors.join('\n'));
-      }
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg === '未选择文件') {
-        // 用户取消选择，不显示错误
-        return;
-      }
-      console.error('SettingsPage', `Import OPML failed: ${msg}`);
-      this.getUIContext().getPromptAction().showToast({ message: `导入失败：${msg}` });
     } finally {
       this.isImporting = false;
     }
   }
 
   private async exportMemory() {
-    try {
-      const content = await MemoryService.getInstance().exportMemoryData();
-      if (!content.trim()) {
-        this.getUIContext().getPromptAction().showToast({ message: '暂无记忆数据可导出' });
-        return;
-      }
-
-      // 使用 OPMLFileHelper 保存文件（复用文件保存逻辑）
-      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-      const filename = `memory_export_${new Date().toISOString().slice(0, 10)}.md`;
-      await OPMLFileHelper.saveOPMLFile(ctx, content, filename);
-      this.getUIContext().getPromptAction().showToast({ message: '记忆数据导出成功' });
-    } catch (e) {
-      const msg = e instanceof Error ? e.message : String(e);
-      if (msg === '用户取消保存') return;
-      this.getUIContext().getPromptAction().showToast({ message: `导出失败：${msg}` });
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    const r = await DataOperationHelper.getInstance().exportMemory(ctx);
+    if (!r.cancelled && r.message) {
+      this.getUIContext().getPromptAction().showToast({ message: r.message });
     }
   }
 
@@ -572,13 +578,8 @@ struct SettingsPage {
         value: '确认清除',
         fontColor: Color.Red,
         action: async () => {
-          try {
-            await MemoryService.getInstance().clearAllMemory();
-            this.getUIContext().getPromptAction().showToast({ message: '记忆数据已清除' });
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            this.getUIContext().getPromptAction().showToast({ message: `清除失败：${msg}` });
-          }
+          const r = await DataOperationHelper.getInstance().clearMemory();
+          this.getUIContext().getPromptAction().showToast({ message: r.message });
         }
       },
       secondaryButton: { value: '取消', action: () => {} }
@@ -593,26 +594,12 @@ struct SettingsPage {
         value: '确认重置',
         fontColor: $r('sys.color.ohos_id_color_warning'),
         action: async () => {
-          try {
-            // 从 rawfile 读取模板
-            const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
-            const soulRaw = await ctx.resourceManager.getRawFileContent('memory/SOUL.md');
-            const profileRaw = await ctx.resourceManager.getRawFileContent('memory/PROFILE.md');
-            const decoder = new util.TextDecoder('utf-8');
-            const soulTemplate = decoder.decodeToString(soulRaw);
-            const profileTemplate = decoder.decodeToString(profileRaw);
-
-            // 执行重置
-            await MemoryService.getInstance().resetToTemplate(soulTemplate, profileTemplate);
-            this.getUIContext().getPromptAction().showToast({ message: '已重置为默认模板' });
-          } catch (e) {
-            const msg = e instanceof Error ? e.message : String(e);
-            this.getUIContext().getPromptAction().showToast({ message: `重置失败：${msg}` });
-          }
+          const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+          const r = await DataOperationHelper.getInstance().resetToTemplate(ctx);
+          this.getUIContext().getPromptAction().showToast({ message: r.message });
         }
       },
       secondaryButton: { value: '取消', action: () => {} }
     });
   }
 }
-

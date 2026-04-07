@@ -7,6 +7,7 @@ import { DatabaseHelper } from '../database/DatabaseHelper';
 import { SettingsService } from '../service/SettingsService';
 import { FeedRefreshService } from '../service/FeedRefreshService';
 import { common } from '@kit.AbilityKit';
+import { router } from '@kit.ArkUI';
 
 @Entry
 @Component
@@ -20,16 +21,28 @@ struct Index {
   @State meRefreshTick: number = 0;
   // 完整重载触发器：后台刷新完成后需要重新加载文章列表（区别于状态同步）
   @State homeFullReloadTick: number = 0;
+  // 追踪通知点击是否已发生（用于抑制 autoRefreshOnLaunch 的冗余吐司）
+  private notificationTapHandlerTriggered: boolean = false;
+  // 追踪是否是从通知冷启动进来的
+  private isStartedFromNotification: boolean = false;
   // 通知点击事件回调引用，用于注销时保持引用一致
   private notificationTapHandler: () => void = () => this.handleNotificationTap();
 
   aboutToAppear() {
     // 获取 UIAbilityContext（用于 EventHub 注册和数据库初始化）
-    const ctx = this.getUIContext().getHostContext();
-
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    
+    // 检查是否是从通知冷启动（通过 EntryAbility 设置的 AppStorage）
+    this.isStartedFromNotification = AppStorage.get<boolean>('notification_cold_start') ?? false;
+    // 读取后立即清理，避免影响后续普通启动
+    AppStorage.setOrCreate('notification_cold_start', false);
+    if (this.isStartedFromNotification) {
+      console.info('Index', '检测到通知冷启动');
+    }
+    
     // 注册 EventHub 监听：通知点击后触发首页刷新
     if (ctx) {
-      (ctx as common.UIAbilityContext).eventHub.on('notification_tap', this.notificationTapHandler);
+      ctx.eventHub.on('notification_tap', this.notificationTapHandler);
       console.info('Index', 'EventHub: notification_tap 监听已注册');
     }
 
@@ -67,7 +80,12 @@ struct Index {
    * 通知点击事件处理：切到首页 Tab + 触发完整重载
    */
   private handleNotificationTap(): void {
-    console.info('Index', '收到通知点击事件，切换到首页并刷新数据');
+    console.info('Index', '收到通知点击事件，清空路由栈并切换到首页刷新数据');
+    this.notificationTapHandlerTriggered = true;
+    // 如果当前在详情页或其他子页面，直接清空返回 Index
+    if (Number(router.getLength()) > 1) {
+      router.back({ url: 'pages/Index' });
+    }
     // 切到首页 Tab
     this.currentIndex = 0;
     // 触发首页完整重载（拉取最新文章列表）
@@ -112,9 +130,12 @@ struct Index {
       // 无论是否有新文章，都触发完整重载（已有文章内容可能也已更新）
       this.homeFullReloadTick++;
       this.feedsRefreshTick++;
-      // 提示用户刷新结果
-      const msg = newCount > 0 ? `已更新 ${newCount} 篇新文章` : '订阅内容已是最新';
-      this.getUIContext().getPromptAction().showToast({ message: msg });
+      
+      if (newCount > 0) {
+        this.getUIContext().getPromptAction().showToast({ message: `已更新 ${newCount} 篇新文章` });
+      } else if (!this.notificationTapHandlerTriggered && !this.isStartedFromNotification) {
+        this.getUIContext().getPromptAction().showToast({ message: '订阅内容已是最新' });
+      }
     }).catch((e: Error) => {
       console.error('Index', `启动自动刷新失败: ${e?.message}`);
       this.getUIContext().getPromptAction().showToast({ message: `刷新失败: ${e?.message ?? '未知错误'}` });

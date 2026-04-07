@@ -1,5 +1,5 @@
 // 首页：展示所有文章（聚合视图）
-import { Article, Feed } from '../model/Models';
+import { Article, Feed, copyArticle } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedRefreshService } from '../service/FeedRefreshService';
 import { MemoryService } from '../service/MemoryService';
@@ -30,9 +30,12 @@ export struct HomePage {
   private pageSize: number = 30;
   private feedMap: Map<number, string> = new Map();
   private exposedArticleIds: Map<number, string> = new Map();
+  private recExposureDedup: Set<number> = new Set(); // 日级曝光去重，防止同一篇文章重复计 REC_EXPOSURE
+  private recExposureDedupDate: string = '';          // 去重集合对应的日期
   private tabController: TabsController = new TabsController();
   private isFullReloading: boolean = false; // 防止并发 loadArticles(true)
   private sortModeReady: boolean = false; // sortMode 是否已从持久化恢复完毕
+  private syncTimerId: number = -1; // syncArticleStatus 中 setTimeout 的 ID
 
   /** 获取当前 Tab 对应的文章列表 */
   private getCurrentArticles(): Article[] {
@@ -50,8 +53,14 @@ export struct HomePage {
 
   aboutToAppear() {
     this.loadAISettings();
-    // 必须先恢复 sortMode，再加载文章，否则推荐模式下角标不会生成
     this.initLoad();
+  }
+
+  aboutToDisappear() {
+    if (this.syncTimerId !== -1) {
+      clearTimeout(this.syncTimerId);
+      this.syncTimerId = -1;
+    }
   }
 
   /**
@@ -109,11 +118,16 @@ export struct HomePage {
       console.info('HomePage', 'onFullReloadTickChanged: sortMode 未就绪，延迟到 initLoad 完成后自动加载');
       return;
     }
+    if (this.isFullReloading) {
+      console.info('HomePage', 'onFullReloadTickChanged: 已在刷新中，当前加载将包含最新数据');
+      return;
+    }
     this.loadArticles(true);
   }
 
   /**
-   * 增量同步：只更新当前列表中文章的已读/收藏状态，不移除或重排文章
+   * 增量同步：更新当前列表中文章的已读/收藏状态
+   * 当 onlyUnread=true 时，已读文章通过动画平滑移除，避免界面抖动
    */
   private async syncArticleStatus() {
     const articles = this.getCurrentArticles();
@@ -122,6 +136,8 @@ export struct HomePage {
       const ids = articles.filter(a => a.id !== undefined).map(a => a.id!);
       const statusMap = await DatabaseHelper.getInstance().getArticlesStatus(ids);
       let changed = false;
+      // 收集新变为已读的文章 ID
+      const newlyReadIds = new Set<number>();
       const updated: Article[] = articles.map(a => {
         const status = a.id !== undefined ? statusMap.get(a.id) : undefined;
         if (status) {
@@ -129,6 +145,9 @@ export struct HomePage {
           const newStarred = status['isStarred'] ?? a.isStarred;
           if (newRead !== a.isRead || newStarred !== a.isStarred) {
             changed = true;
+            if (newRead === 1 && a.isRead === 0 && a.id !== undefined) {
+              newlyReadIds.add(a.id);
+            }
             const copy: Article = {
               id: a.id, feedId: a.feedId, feedTitle: a.feedTitle,
               guid: a.guid, title: a.title, summary: a.summary,
@@ -143,11 +162,62 @@ export struct HomePage {
         return a;
       });
       if (changed) {
-        this.setCurrentArticles(updated);
+        if (this.onlyUnread && newlyReadIds.size > 0) {
+          // 先更新状态（让文章样式变灰），再用动画移除
+          this.setCurrentArticles(updated);
+          // 短暂延迟后平滑移除已读文章
+          this.syncTimerId = setTimeout(() => {
+            this.syncTimerId = -1;
+            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+              const current = this.getCurrentArticles();
+              this.setCurrentArticles(current.filter(a => !newlyReadIds.has(a.id!)));
+            });
+          }, 150);
+        } else {
+          this.setCurrentArticles(updated);
+        }
       }
     } catch (e) {
       console.error('HomePage', `syncArticleStatus failed: ${e}`);
     }
+  }
+
+  /**
+   * 进入详情前先落库已读，并同步当前列表，避免已读文章仍停留在仅未读列表
+   */
+  private async preMarkArticleAsRead(article: Article): Promise<void> {
+    if (article.id === undefined || article.isRead === 1) {
+      return;
+    }
+    try {
+      await DatabaseHelper.getInstance().markRead(article.id, 1);
+    } catch (e) {
+      console.error('HomePage', `preMarkArticleAsRead DB update failed: ${e}`);
+    }
+
+    const current = this.getCurrentArticles();
+    const idx = current.findIndex(a => a.id === article.id);
+    if (idx < 0) {
+      return;
+    }
+
+    if (this.onlyUnread) {
+      this.setCurrentArticles(current.filter(a => a.id !== article.id));
+      return;
+    }
+
+    const target = current[idx];
+    const updated: Article = {
+      id: target.id, feedId: target.feedId, feedTitle: target.feedTitle,
+      guid: target.guid, title: target.title, summary: target.summary,
+      content: target.content, url: target.url, author: target.author,
+      publishedAt: target.publishedAt, isRead: 1,
+      isStarred: target.isStarred, coverImage: target.coverImage, cachedAt: target.cachedAt,
+      recommendScore: target.recommendScore, recommendReason: target.recommendReason
+    };
+    const copy = [...current];
+    copy[idx] = updated;
+    this.setCurrentArticles(copy);
   }
 
   async loadArticles(reset: boolean = true) {
@@ -212,12 +282,18 @@ export struct HomePage {
           this.exposedArticleIds.set(item.id, item.feedTitle ?? '');
         }
       }
-      // 推荐模式下批量记录 REC_EXPOSURE（同一会话同一文章只计一次）
+      // 推荐模式下记录 REC_EXPOSURE（同一篇文章同一天只计一次曝光）
       if (this.sortMode === Constants.SORT_MODE_RECOMMEND) {
+        const today = new Date().toISOString().slice(0, 10);
+        if (this.recExposureDedupDate !== today) {
+          this.recExposureDedup.clear();
+          this.recExposureDedupDate = today;
+        }
         const now = Date.now();
         for (let i = 0; i < items.length; i++) {
           const item = items[i];
-          if (item.id !== undefined) {
+          if (item.id !== undefined && !this.recExposureDedup.has(item.id)) {
+            this.recExposureDedup.add(item.id);
             MemoryService.getInstance().recordBehavior({
               timestamp: now,
               action: 'REC_EXPOSURE',
@@ -260,9 +336,9 @@ export struct HomePage {
     const memSvc = MemoryService.getInstance();
     const aiSvc = AIService.getInstance();
 
-    // 获取待推荐的文章列表
-    const allArticles = await db.getRecentUnreadArticles(
-      Constants.RECOMMEND_RECENT_DAYS, Constants.RECOMMEND_MAX_ARTICLES);
+    // 获取待推荐的文章列表（跟随仅未读开关）
+    const allArticles = await db.getRecentArticles(
+      Constants.RECOMMEND_RECENT_DAYS, Constants.RECOMMEND_MAX_ARTICLES, this.onlyUnread);
     for (const a of allArticles) {
       a.feedTitle = this.feedMap.get(a.feedId) ?? '';
     }
@@ -479,37 +555,45 @@ export struct HomePage {
   @Builder
   latestListBuilder() {
     Column() {
-      if (this.isLoading && this.latestArticles.length === 0) {
-        Column() {
-          LoadingProgress()
-            .width(40)
-            .height(40)
-            .backgroundColor(Color.Transparent)
-          Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else if (this.latestArticles.length === 0) {
-        Column({ space: 16 }) {
-          Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
-          Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else {
-        Refresh({ refreshing: $$this.isRefreshing }) {
+      Refresh({ refreshing: $$this.isRefreshing }) {
+        if (this.isLoading && this.latestArticles.length === 0) {
+          Column() {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .backgroundColor(Color.Transparent)
+            Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else if (this.latestArticles.length === 0) {
+          List() {
+            ListItem() {
+              Column({ space: 16 }) {
+                Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .edgeEffect(EdgeEffect.Spring)
+        } else {
           List() {
             ForEach(this.latestArticles, (article: Article) => {
               ListItem() {
                 ArticleItemComponent({
                   article: article,
                   recommendReason: '',
-                  onTap: () => {
+                  onTap: async () => {
                     if (article.id !== undefined) {
                       this.exposedArticleIds.delete(article.id);
                     }
+                    await this.preMarkArticleAsRead(article);
                     this.getUIContext().getRouter().pushUrl({
                       url: 'pages/ArticleDetailPage',
                       params: { articleId: article.id }
@@ -568,12 +652,13 @@ export struct HomePage {
             }
           }
           .width('100%')
-          .layoutWeight(1)
+          .height('100%')
           .divider({ strokeWidth: 0.5, color: $r('sys.color.ohos_id_color_list_separator') })
+          .edgeEffect(EdgeEffect.Spring)
         }
-        .onRefreshing(() => this.doRefresh())
-        .layoutWeight(1)
       }
+      .onRefreshing(() => this.doRefresh())
+      .layoutWeight(1)
     }
     .width('100%')
     .height('100%')
@@ -582,34 +667,41 @@ export struct HomePage {
   @Builder
   recommendListBuilder() {
     Column() {
-      if (this.isLoading && this.recommendArticles.length === 0) {
-        Column() {
-          LoadingProgress()
-            .width(40)
-            .height(40)
-            .backgroundColor(Color.Transparent)
-          Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else if (this.recommendArticles.length === 0) {
-        Column({ space: 16 }) {
-          Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
-          Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-        }
-        .width('100%')
-        .layoutWeight(1)
-        .justifyContent(FlexAlign.Center)
-      } else {
-        Refresh({ refreshing: $$this.isRefreshing }) {
+      Refresh({ refreshing: $$this.isRefreshing }) {
+        if (this.isLoading && this.recommendArticles.length === 0) {
+          Column() {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .backgroundColor(Color.Transparent)
+            Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else if (this.recommendArticles.length === 0) {
+          List() {
+            ListItem() {
+              Column({ space: 16 }) {
+                Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .edgeEffect(EdgeEffect.Spring)
+        } else {
           List() {
             ForEach(this.recommendArticles, (article: Article) => {
               ListItem() {
                 ArticleItemComponent({
                   article: article,
                   recommendReason: article.recommendReason ?? '',
-                  onTap: () => {
+                  onTap: async () => {
                     if (article.id !== undefined) {
                       this.exposedArticleIds.delete(article.id);
                       // 记录推荐命中
@@ -621,6 +713,7 @@ export struct HomePage {
                         feedTitle: article.feedTitle
                       });
                     }
+                    await this.preMarkArticleAsRead(article);
                     this.getUIContext().getRouter().pushUrl({
                       url: 'pages/ArticleDetailPage',
                       params: { articleId: article.id }
@@ -631,15 +724,9 @@ export struct HomePage {
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
                     const idx = this.recommendArticles.findIndex(a => a.id === article.id);
                     if (idx >= 0) {
-                      const updated: Article = {
-                        id: article.id, feedId: article.feedId, feedTitle: article.feedTitle,
-                        guid: article.guid, title: article.title, summary: article.summary,
-                        content: article.content, url: article.url, author: article.author,
-                        publishedAt: article.publishedAt, isRead: article.isRead,
-                        isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt,
-                        recommendScore: article.recommendScore, recommendReason: article.recommendReason
-                      };
-                      this.recommendArticles[idx] = updated;
+                      const starOverrides = new Map<string, number | string | undefined>();
+                      starOverrides.set('isStarred', newStar);
+                      this.recommendArticles[idx] = copyArticle(article, starOverrides);
                       this.recommendArticles = [...this.recommendArticles];
                     }
                   }
@@ -679,12 +766,13 @@ export struct HomePage {
             }
           }
           .width('100%')
-          .layoutWeight(1)
+          .height('100%')
           .divider({ strokeWidth: 0.5, color: $r('sys.color.ohos_id_color_list_separator') })
+          .edgeEffect(EdgeEffect.Spring)
         }
-        .onRefreshing(() => this.doRefresh())
-        .layoutWeight(1)
       }
+      .onRefreshing(() => this.doRefresh())
+      .layoutWeight(1)
     }
     .width('100%')
     .height('100%')

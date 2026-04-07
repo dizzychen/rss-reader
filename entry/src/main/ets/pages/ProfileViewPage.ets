@@ -92,8 +92,13 @@ struct ProfileViewPage {
     try {
       await ProfileService.getInstance().regenerate();
       this.content = await MemoryService.getInstance().getProfile();
+      const lessons = await MemoryService.getInstance().getLessons();
       if (this.content.trim()) {
         this.profileData = this.parseProfileMarkdown(this.content);
+        if (lessons.trim() && this.profileData) {
+          this.profileData.lessonsPreview = this.extractLessonsPreview(lessons);
+          this.profileData.recHitRate = this.extractRecHitRate(lessons);
+        }
       }
       this.getUIContext().getPromptAction().showToast({ message: '画像已更新' });
     } catch (e) {
@@ -504,27 +509,40 @@ struct ProfileViewPage {
    */
   private extractRecHitRate(lessons: string): string {
     const lines = lessons.split('\n');
-    let lastDataRow = '';
     let inTrackingTable = false;
+    let latestDate = '';
+    let latestHitRate = '';
+
     for (const line of lines) {
       if (line.includes('推荐效果追踪')) {
         inTrackingTable = true;
         continue;
       }
-      if (inTrackingTable && line.startsWith('| ') && !line.startsWith('| 日期') && !line.startsWith('|---')) {
-        lastDataRow = line;
-      }
       if (inTrackingTable && line.startsWith('## ') && !line.includes('推荐效果追踪')) {
         break;
       }
+      if (!inTrackingTable || !line.startsWith('| ') || line.startsWith('| 日期') || line.startsWith('|---')) {
+        continue;
+      }
+
+      const parts = line.split('|').map(s => s.trim()).filter(s => s.length > 0);
+      if (parts.length < 2) {
+        continue;
+      }
+
+      const date = parts[0];
+      const hitRate = parts[1];
+      if (!date) {
+        continue;
+      }
+
+      // 取日期最新的一行，避免受表格行顺序影响
+      if (!latestDate || date > latestDate) {
+        latestDate = date;
+        latestHitRate = hitRate;
+      }
     }
-    if (!lastDataRow) {
-      return '';
-    }
-    const parts = lastDataRow.split('|').map(s => s.trim()).filter(s => s.length > 0);
-    if (parts.length >= 2) {
-      return parts[1]; // 命中率列
-    }
-    return '';
+
+    return latestHitRate;
   }
 }

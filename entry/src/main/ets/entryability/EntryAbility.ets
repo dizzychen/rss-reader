@@ -28,6 +28,7 @@ export default class EntryAbility extends UIAbility {
     if (want?.parameters?.from === 'notification') {
       hilog.info(DOMAIN, 'RSSReader', '冷启动来自通知点击，暂存标记');
       this.pendingNotificationTap = true;
+      AppStorage.setOrCreate('notification_cold_start', true);
     }
     // 初始化数据库
     await DatabaseHelper.getInstance().init(this.context);
@@ -129,7 +130,7 @@ export default class EntryAbility extends UIAbility {
         setTimeout(() => {
           this.context.eventHub.emit('notification_tap');
           hilog.info(DOMAIN, 'RSSReader', '冷启动通知事件已发送: notification_tap');
-        }, 300);
+        }, 600);
       }
     });
 

@@ -309,6 +309,9 @@ export class ProfileService {
     }
 
     try {
+      // 先落盘行为队列，确保推荐曝光/命中统计是最新值
+      await memSvc.flushBehaviors();
+
       const filesDir = memSvc.getFilesDir();
       const dailyDir = `${filesDir}/${Constants.MEMORY_DAILY_DIR}`;
       const files = await MemoryFileHelper.listFiles(dailyDir);
@@ -764,19 +767,89 @@ ${dislikedList}
       const hitRateStr = hitRate >= 0 ? `${(hitRate * 100).toFixed(1)}%` : '-';
       const newRow = `| ${today} | ${hitRateStr} | ${totalExposure} | ${totalHit} |`;
 
-      // 在推荐效果追踪表末尾追加一行
-      const tableEndMarker = '|------|--------|--------|--------|';
-      const markerIdx = lessonsContent.indexOf(tableEndMarker);
-      if (markerIdx >= 0) {
-        const insertPos = markerIdx + tableEndMarker.length;
-        const before = lessonsContent.substring(0, insertPos);
-        const after = lessonsContent.substring(insertPos);
-        // 避免同一天重复追加
-        if (!after.includes(`| ${today} |`)) {
-          const updated = `${before}\n${newRow}${after}`;
-          await memSvc.updateLessons(updated);
+      // 同一天数据使用最新统计覆盖，避免命中率卡在旧值（如 0.0%）
+      const lines = lessonsContent.split('\n');
+      let inTrackingSection = false;
+      let separatorIndex = -1;
+      let sectionEndIndex = lines.length;
+      const dataRowIndexes: number[] = [];
+
+      for (let i = 0; i < lines.length; i++) {
+        const line = lines[i];
+        if (line.includes('推荐效果追踪')) {
+          inTrackingSection = true;
+          continue;
+        }
+        if (!inTrackingSection) {
+          continue;
+        }
+        if (line.startsWith('## ') && !line.includes('推荐效果追踪')) {
+          sectionEndIndex = i;
+          break;
+        }
+        if (line.startsWith('|------|')) {
+          separatorIndex = i;
+          continue;
+        }
+        if (line.startsWith('| ') && !line.startsWith('| 日期')) {
+          dataRowIndexes.push(i);
         }
       }
+
+      if (separatorIndex < 0) {
+        return;
+      }
+
+      let replaced = false;
+      for (const rowIndex of dataRowIndexes) {
+        if (lines[rowIndex].includes(`| ${today} |`)) {
+          lines[rowIndex] = newRow;
+          replaced = true;
+          break;
+        }
+      }
+
+      if (!replaced) {
+        // 新日期插入到表头后（最新在前）
+        lines.splice(separatorIndex + 1, 0, newRow);
+      }
+
+      // 仅保留推荐效果追踪区间内的行排序（日期倒序）
+      const currentDataRows: string[] = [];
+      let start = separatorIndex + 1;
+      let end = sectionEndIndex;
+      if (end < start) {
+        end = lines.length;
+      }
+      for (let i = start; i < end; i++) {
+        const line = lines[i];
+        if (line.startsWith('| ') && !line.startsWith('| 日期') && !line.startsWith('|------|')) {
+          currentDataRows.push(line);
+        }
+      }
+      currentDataRows.sort((a, b) => {
+        const aParts = a.split('|').map(s => s.trim()).filter(s => s.length > 0);
+        const bParts = b.split('|').map(s => s.trim()).filter(s => s.length > 0);
+        const aDate = aParts.length > 0 ? aParts[0] : '';
+        const bDate = bParts.length > 0 ? bParts[0] : '';
+        return bDate.localeCompare(aDate);
+      });
+
+      // 重建 tracking 表数据区，避免重复行
+      const rebuilt: string[] = [];
+      for (let i = 0; i < lines.length; i++) {
+        if (i <= separatorIndex || i >= sectionEndIndex) {
+          rebuilt.push(lines[i]);
+          continue;
+        }
+        if (i === separatorIndex + 1) {
+          for (const row of currentDataRows) {
+            rebuilt.push(row);
+          }
+        }
+      }
+
+      await memSvc.updateLessons(rebuilt.join('\n'));
     } catch (e) {
       console.warn('ProfileService', `updateLessonsTracking failed: ${String(e)}`);
     }

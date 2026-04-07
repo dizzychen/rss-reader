@@ -302,7 +302,7 @@ export class RssService {
       }
 
       const article: ParsedArticle = {
-        guid: guid,
+        guid: this.normalizeGuid(guid),
         title: title,
         summary: this.stripHtml(description).slice(0, 300),
         content: contentEncoded || description || '',
@@ -375,7 +375,7 @@ export class RssService {
       }
 
       const article: ParsedArticle = {
-        guid: id || url || title,
+        guid: this.normalizeGuid(id || url || title),
         title: this.stripHtml(title),
         summary: this.stripHtml(summary || title).slice(0, 300),
         content: content || summary || `<p>${title}</p>`,
@@ -475,7 +475,7 @@ export class RssService {
         this.getTagAttribute(itemXml, 'item', 'rdf:about');
 
       const article: ParsedArticle = {
-        guid: about || link || title,
+        guid: this.normalizeGuid(about || link || title),
         title: title,
         summary: this.stripHtml(description).slice(0, 300),
         content: description || `<p>${title}</p>`,
@@ -519,15 +519,35 @@ export class RssService {
       .trim();
   }
 
+  private normalizeGuid(guid: string): string {
+    if (!guid) return '';
+    // 移除 URL 中的常见追踪参数，增加 GUID 稳定性
+    // 仅在 guid 看起来像 URL 时处理（含 http:// 或 https://）
+    if ((guid.startsWith('http://') || guid.startsWith('https://')) && guid.includes('?')) {
+      try {
+        const parts = guid.split('?');
+        const baseUrl = parts[0];
+        const params = parts[1].split('&').filter(p =>
+          !p.startsWith('utm_') && !p.startsWith('ref=') && !p.startsWith('spm=')
+        );
+        return params.length > 0 ? `${baseUrl}?${params.join('&')}` : baseUrl;
+      } catch (e) {
+        return guid;
+      }
+    }
+    return guid.trim();
+  }
+
   private parseDate(dateStr: string): number {
     if (!dateStr) {
-      return Date.now();
+      // 如果没有日期，返回 0 而不是 Date.now()，保证每次刷新结果一致
+      return 0;
     }
     try {
       const d = new Date(dateStr);
-      return isNaN(d.getTime()) ? Date.now() : d.getTime();
+      return isNaN(d.getTime()) ? 0 : d.getTime();
     } catch {
-      return Date.now();
+      return 0;
     }
   }
 
