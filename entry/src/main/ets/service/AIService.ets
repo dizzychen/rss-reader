@@ -424,7 +424,7 @@ export class AIService {
     }
 
     try {
-      const context = await MemoryService.getInstance().buildAIContext();
+      const context = await MemoryService.getInstance().buildLayeredContext(1); // L0+L1: 排序只需偏好+画像摘要
 
       // 构建文章列表摘要（避免上下文过长，限制前30篇）
       let articleSummaries = '';
@@ -508,7 +508,7 @@ ${articleSummaries}`;
     }
 
     try {
-      const context = await MemoryService.getInstance().buildAIContext();
+      const context = await MemoryService.getInstance().buildLayeredContext(2); // L0-L2: 简报需近日行为
       const today = DateUtil.today();
 
       let articleList = '';
@@ -569,7 +569,7 @@ ${articleList}`;
     }
 
     try {
-      const context = await MemoryService.getInstance().buildAIContext();
+      const context = await MemoryService.getInstance().buildLayeredContext(1); // L0+L1: 解读只需偏好
 
       const content = (article.content || article.summary || '').substring(0, 2000);
 
@@ -619,7 +619,7 @@ ${articleList}`;
     }
 
     try {
-      const context = await MemoryService.getInstance().buildAIContext();
+      const context = await MemoryService.getInstance().buildLayeredContext(1); // L0+L1
 
       const content = (article.content || article.summary || '').substring(0, 2000);
 

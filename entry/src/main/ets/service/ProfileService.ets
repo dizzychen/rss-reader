@@ -673,6 +673,38 @@ ${dislikedList}
       }
     }
 
+    // === 压缩摘要区块（供分层上下文 L1 快速加载，~150 token）===
+    parts.push(`## 压缩摘要`);
+    parts.push(``);
+    const compactLines: string[] = [];
+    // 订阅源 Top5 压缩格式
+    if (profile.feedInterests.length > 0) {
+      const feedCompact = profile.feedInterests.slice(0, 5)
+        .map(w => `${w.key}:${w.weight.toFixed(2)}`).join(', ');
+      compactLines.push(`源偏好: ${feedCompact}`);
+    }
+    // 话题压缩格式
+    if (profile.topicInterests.length > 0) {
+      const topicCompact = profile.topicInterests.slice(0, 8)
+        .map(w => `${w.key}:${w.weight.toFixed(2)}`).join(', ');
+      compactLines.push(`话题: ${topicCompact}`);
+    }
+    // 搜索关键词
+    if (profile.searchKeywords && profile.searchKeywords.length > 0) {
+      compactLines.push(`搜索: ${profile.searchKeywords.join(', ')}`);
+    }
+    // AI 洞察一行
+    if (profile.readingStyle) {
+      compactLines.push(`风格: ${profile.readingStyle}`);
+    }
+    if (profile.dislikePatterns) {
+      compactLines.push(`排除: ${profile.dislikePatterns}`);
+    }
+    // 统计概要
+    compactLines.push(`统计: ${profile.totalArticles}篇/${profile.totalReadDays}天, 日均${profile.avgDailyRead}篇, 时段${profile.preferredReadTime}`);
+    parts.push(compactLines.join('\n'));
+    parts.push(``);
+
     return parts.join('\n');
   }
 
@@ -726,10 +758,11 @@ ${dislikedList}
         }
         const before = existingProfile.substring(0, afterHeader + 1);
         const after = existingProfile.substring(nextSectionIdx);
-        const patched = `${before}\n${feedSectionNew}\n${after}`;
+        const patchedFeed = `${before}\n${feedSectionNew}\n${after}`;
+        const patched = this.patchCompactFeedSummaryLine(patchedFeed, updatedWeights);
         await memSvc.updateProfile(patched);
         RecommendService.getInstance().clearProfileCache();
-        console.info('ProfileService', 'quickRefresh patch done');
+        console.info('ProfileService', 'quickRefresh patch done (feed + compact summary)');
       } else {
         // 章节不存在，降级为全量重建
         console.warn('ProfileService', 'quickRefresh: section not found, falling back to regenerate');
@@ -744,6 +777,59 @@ ${dislikedList}
         console.error('ProfileService', `quickRefresh fallback regenerate failed: ${String(regen)}`);
       }
     }
+  }
+
+  /**
+   * 同步更新 PROFILE.md 的压缩摘要区块中的“源偏好”行
+   */
+  private patchCompactFeedSummaryLine(profileContent: string, feedWeights: InterestWeight[]): string {
+    if (feedWeights.length === 0) {
+      return profileContent;
+    }
+
+    const compactHeader = '## 压缩摘要';
+    const compactIdx = profileContent.indexOf(compactHeader);
+    if (compactIdx < 0) {
+      return profileContent;
+    }
+
+    const afterHeader = profileContent.indexOf('\n', compactIdx);
+    if (afterHeader < 0) {
+      return profileContent;
+    }
+
+    let nextSectionIdx = profileContent.indexOf('\n## ', afterHeader);
+    if (nextSectionIdx < 0) {
+      nextSectionIdx = profileContent.length;
+    }
+
+    const before = profileContent.substring(0, afterHeader + 1);
+    const sectionContent = profileContent.substring(afterHeader + 1, nextSectionIdx);
+    const after = profileContent.substring(nextSectionIdx);
+
+    const feedCompact = feedWeights.slice(0, 5)
+      .map(w => `${w.key}:${w.weight.toFixed(2)}`).join(', ');
+    const newLine = `源偏好: ${feedCompact}`;
+
+    const lines = sectionContent.split('\n');
+    let replaced = false;
+    for (let i = 0; i < lines.length; i++) {
+      if (lines[i].startsWith('源偏好:')) {
+        lines[i] = newLine;
+        replaced = true;
+        break;
+      }
+    }
+
+    if (!replaced) {
+      let insertIndex = 0;
+      while (insertIndex < lines.length && lines[insertIndex].trim().length === 0) {
+        insertIndex++;
+      }
+      lines.splice(insertIndex, 0, newLine);
+    }
+
+    return `${before}${lines.join('\n')}${after}`;
   }
 
   /**

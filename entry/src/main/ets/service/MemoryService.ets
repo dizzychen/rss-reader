@@ -420,71 +420,169 @@ export class MemoryService {
     }
   }
 
-  // ===== AI 上下文构建 =====
+  // ===== AI 上下文构建（分层加载，借鉴 MemPalace L0-L3 思想） =====
 
   /**
-   * 构建 AI 上下文（SOUL + PROFILE + 今日日志摘要）
+   * 分层上下文级别：
+   * - L0: SOUL 核心段（身份+兴趣，~100 token）— 始终加载
+   * - L1: PROFILE 压缩摘要（权重+话题+洞察，~200 token）— level >= 1 时加载
+   * - L2: 近日行为摘要（今日+昨日结构化摘要）— level >= 2 时加载
+   * - L3: LESSONS 经验教训（完整追踪数据）— level >= 3 时加载
    */
-  async buildAIContext(): Promise<string> {
+
+  /**
+   * 构建分层 AI 上下文（按需加载，降低 token 消耗）
+   * @param level 最高加载层级，取值会被归一化到 [0, 3]，默认 1（轻量模式）
+   */
+  async buildLayeredContext(level: number = 1): Promise<string> {
     if (!this.initialized) {
       return '';
     }
     try {
-      const soul = await this.getSoul();
-      const profile = await this.getProfile();
-      const lessons = await this.getLessons();
-      const today = DateUtil.today();
-      const yesterday = DateUtil.daysAgo(1);
-
-      const todayLog = await MemoryFileHelper.readMarkdown(
-        `${this.filesDir}/${Constants.MEMORY_DAILY_DIR}/${today}.md`
-      );
-      const yesterdayLog = await MemoryFileHelper.readMarkdown(
-        `${this.filesDir}/${Constants.MEMORY_DAILY_DIR}/${yesterday}.md`
-      );
-
+      const normalizedLevel = Math.max(0, Math.min(3, Math.floor(level)));
       const parts: string[] = [];
 
+      // === L0: SOUL 核心段（始终加载）===
+      const soul = await this.getSoul();
       if (soul.trim()) {
-        parts.push(`## 我的阅读偏好\n${soul.trim()}`);
+        const compactSoul = this.extractSoulCore(soul);
+        parts.push(`## 用户偏好\n${compactSoul}`);
       }
 
-      if (profile.trim()) {
-        parts.push(`## 我的阅读画像\n${profile.trim()}`);
-      }
-
-      // 今日+昨日双日结构化行为摘要（替代原始日志前50行）
-      const todaySummary = this.buildDaySummary(todayLog, today);
-      const yesterdaySummary = this.buildDaySummary(yesterdayLog, yesterday);
-      if (todaySummary || yesterdaySummary) {
-        let summaryText = '## 近日阅读行为摘要\n';
-        if (todaySummary) {
-          summaryText += `### 今日 (${today})\n${todaySummary}\n`;
+      // === L1: PROFILE 压缩摘要（level>=1 加载）===
+      if (normalizedLevel >= 1) {
+        const profile = await this.getProfile();
+        if (profile.trim()) {
+          const compactProfile = this.extractCompactProfile(profile);
+          if (compactProfile) {
+            parts.push(`## 阅读画像摘要\n${compactProfile}`);
+          }
         }
-        if (yesterdaySummary) {
-          summaryText += `### 昨日 (${yesterday})\n${yesterdaySummary}\n`;
+      }
+
+      // === L2: 近日行为摘要（level>=2 加载）===
+      if (normalizedLevel >= 2) {
+        const today = DateUtil.today();
+        const yesterday = DateUtil.daysAgo(1);
+        const todayLog = await MemoryFileHelper.readMarkdown(
+          `${this.filesDir}/${Constants.MEMORY_DAILY_DIR}/${today}.md`
+        );
+        const yesterdayLog = await MemoryFileHelper.readMarkdown(
+          `${this.filesDir}/${Constants.MEMORY_DAILY_DIR}/${yesterday}.md`
+        );
+        const todaySummary = this.buildDaySummary(todayLog, today);
+        const yesterdaySummary = this.buildDaySummary(yesterdayLog, yesterday);
+        if (todaySummary || yesterdaySummary) {
+          let summaryText = '## 近日阅读行为\n';
+          if (todaySummary) {
+            summaryText += `### 今日 (${today})\n${todaySummary}\n`;
+          }
+          if (yesterdaySummary) {
+            summaryText += `### 昨日 (${yesterday})\n${yesterdaySummary}\n`;
+          }
+          parts.push(summaryText.trimEnd());
         }
-        parts.push(summaryText.trimEnd());
       }
 
-      // LESSONS 经验教训
-      if (lessons.trim() && lessons.trim() !== '# 阅读经验') {
-        const lessonsSnippet = lessons.substring(0, 2000);
-        parts.push(`## 阅读经验教训\n${lessonsSnippet}`);
-      }
-
-      // 提取画像中的 AI 洞察摘要
-      const insightSummary = this.extractProfileInsights(profile);
-      if (insightSummary) {
-        parts.push(`## 个性化摘要\n${insightSummary}`);
+      // === L3: LESSONS 经验教训（level>=3 加载）===
+      if (normalizedLevel >= 3) {
+        const lessons = await this.getLessons();
+        const lessonsTrimmed = lessons.trim();
+        if (lessonsTrimmed && lessonsTrimmed !== '# 阅读经验') {
+          const lessonsSnippet = lessons.substring(0, 2000);
+          parts.push(`## 阅读经验教训\n${lessonsSnippet}`);
+        }
       }
 
       return parts.join('\n\n');
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      console.error('MemoryService', `buildAIContext failed: ${msg}`);
+      console.error('MemoryService', `buildLayeredContext failed: ${msg}`);
       return '';
     }
+  }
+
+  /**
+   * 兼容旧接口：全量加载（L0-L3）
+   */
+  async buildAIContext(): Promise<string> {
+    return this.buildLayeredContext(3);
+  }
+
+  /**
+   * L0: 从 SOUL.md 提取核心身份信息（压缩到 ~100 token）
+   * 只保留"关于我"、"兴趣领域"、"不感兴趣的内容"三个关键段
+   */
+  private extractSoulCore(soul: string): string {
+    const sections = soul.split(/\n##\s+/);
+    const coreParts: string[] = [];
+    const coreKeywords = ['关于我', '自我介绍', '兴趣领域', '兴趣', '不感兴趣', '不喜欢'];
+    for (const section of sections) {
+      const lower = section.toLowerCase();
+      const firstLine = section.split('\n')[0] ?? '';
+      if (coreKeywords.some(kw => lower.startsWith(kw) || firstLine.includes(kw))) {
+        const lines = section.split('\n')
+          .filter(l => l.trim() && !l.trim().startsWith('<!--'));
+        const heading = lines[0] ?? '';
+        const body = lines.slice(1, 6).join('\n');
+        coreParts.push(`### ${heading}\n${body}`);
+      }
+    }
+    return coreParts.length > 0 ? coreParts.join('\n') : soul.substring(0, 500);
+  }
+
+  /**
+   * L1: 从 PROFILE.md 提取压缩摘要区块
+   * 优先读取 ## 压缩摘要 区块（由 ProfileService 生成）
+   * 降级：提取订阅源偏好 Top5 + 话题偏好 + AI 洞察关键句
+   */
+  private extractCompactProfile(profile: string): string {
+    // 优先使用预生成的压缩摘要
+    const compactSection = MarkdownUtil.extractSection(profile, '## 压缩摘要');
+    if (compactSection && compactSection.trim()) {
+      return compactSection.trim();
+    }
+
+    // 降级：手动提取关键段
+    const parts: string[] = [];
+
+    // 提取订阅源偏好 Top5
+    const feedSection = MarkdownUtil.extractSection(profile, '## 订阅源偏好');
+    if (feedSection) {
+      const feedLines = feedSection.split('\n')
+        .filter(l => l.startsWith('|') && !l.startsWith('| 名称') && !l.startsWith('|---'));
+      if (feedLines.length > 0) {
+        const top5 = feedLines.slice(0, 5).map(line => {
+          const cols = line.split('|').map(s => s.trim()).filter(s => s.length > 0);
+          return cols.length >= 2 ? `${cols[0]}:${cols[1].replace(/█/g, '').trim()}` : '';
+        }).filter(s => s).join(', ');
+        parts.push(`订阅源偏好: ${top5}`);
+      }
+    }
+
+    // 提取话题偏好
+    const topicSection = MarkdownUtil.extractSection(profile, '## 话题偏好');
+    if (topicSection) {
+      const topicLines = topicSection.split('\n')
+        .filter(l => l.startsWith('|') && !l.startsWith('| 名称') && !l.startsWith('|---'));
+      if (topicLines.length > 0) {
+        const topics = topicLines.slice(0, 8).map(line => {
+          const cols = line.split('|').map(s => s.trim()).filter(s => s.length > 0);
+          return cols.length >= 1 ? cols[0] : '';
+        }).filter(s => s).join(', ');
+        parts.push(`话题偏好: ${topics}`);
+      }
+    }
+
+    // 提取 AI 洞察关键句
+    const insightSection = MarkdownUtil.extractSection(profile, '## AI 洞察');
+    if (insightSection) {
+      const insightLines = insightSection.split('\n')
+        .filter(l => l.trim() && !l.startsWith('#'));
+      parts.push(insightLines.slice(0, 3).join('\n'));
+    }
+
+    return parts.join('\n');
   }
 
   /**
@@ -578,13 +676,6 @@ export class MemoryService {
     }
 
     return summaryParts.join('\n');
-  }
-
-  /**
-   * 从 PROFILE.md 中提取 AI 洞察关键段落
-   */
-  private extractProfileInsights(profile: string): string {
-    return MarkdownUtil.extractSections(profile, ['## AI 洞察', '## 搜索兴趣']);
   }
 
   // ===== AI 排序缓存 =====
