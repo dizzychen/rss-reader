@@ -9,6 +9,8 @@ import { AIService } from '../service/AIService';
 import { BriefingService } from '../service/BriefingService';
 import { Constants } from '../constants/Constants';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
+import { BackupService } from '../service/BackupService';
+import { common } from '@kit.AbilityKit';
 
 @Component
 export struct HomePage {
@@ -54,6 +56,49 @@ export struct HomePage {
   aboutToAppear() {
     this.loadAISettings();
     this.initLoad();
+    // 监听恢复提示事件
+    this.getUIContext().getHostContext().eventHub.on('need_restore', () => {
+      this.showRestoreDialog();
+    });
+  }
+
+  aboutToDisappear() {
+    super.aboutToDisappear?.();
+    // 移除事件监听
+    this.getUIContext().getHostContext().eventHub.off('need_restore');
+  }
+
+  private async showRestoreDialog() {
+    const ctx = this.getUIContext();
+    ctx.showAlertDialog({
+      title: '发现备份数据',
+      message: '检测到您可能是重装了应用，是否从公共目录的备份恢复数据？',
+      primaryButton: {
+        value: '立即恢复',
+        action: async () => {
+          try {
+            const context = this.getUIContext().getHostContext() as common.UIAbilityContext;
+            const backupService = BackupService.getInstance();
+            const json = await backupService.loadBackupFromPublic(context);
+            const result = await backupService.restoreBackup(json);
+            let msg = `恢复完成：${result.feedCount} 个订阅源`;
+            if (result.groupCount > 0) msg += `、${result.groupCount} 个分组`;
+            if (result.skippedFeeds > 0) msg += `（${result.skippedFeeds} 个已存在跳过）`;
+            if (result.settingsRestored) msg += '，配置已恢复';
+            ctx.getPromptAction().showToast({ message: msg });
+            // 重新加载数据
+            this.initLoad();
+          } catch (e) {
+            ctx.getPromptAction().showToast({ message: `恢复失败：${e instanceof Error ? e.message : String(e)}` });
+          }
+        }
+      },
+      secondaryButton: { value: '手动恢复', action: () => {
+        // 跳转到设置页面手动恢复
+        this.getUIContext().getRouter().pushUrl({ url: 'pages/SettingsPage' });
+      }},
+      thirdButton: { value: '取消', action: () => {} }
+    });
   }
 
   aboutToDisappear() {

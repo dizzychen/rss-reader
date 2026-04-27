@@ -350,44 +350,69 @@ export class DatabaseHelper {
    */
   async insertOrUpdateArticle(article: Article): Promise<number> {
     if (!this.rdbStore) return -1;
-    const values: relationalStore.ValuesBucket = {
-      feed_id: article.feedId,
-      guid: article.guid,
-      title: article.title,
-      summary: article.summary,
-      content: article.content,
-      url: article.url,
-      author: article.author,
-      published_at: article.publishedAt,
-      is_read: article.isRead,
-      is_starred: article.isStarred,
-      cover_image: article.coverImage,
-      cached_at: Date.now()
-    };
-    // 先尝试插入新文章
-    const rowId = await this.rdbStore.insert(Constants.TABLE_ARTICLES, values,
-      relationalStore.ConflictResolution.ON_CONFLICT_IGNORE);
-    if (rowId > 0) {
-      return rowId; // 新文章插入成功
+
+    // 先查询文章是否已存在（保留用户状态的关键）
+    const existPred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+    existPred.equalTo('feed_id', article.feedId).and().equalTo('guid', article.guid);
+    const existResult = await this.rdbStore.query(existPred, ['id', 'is_read', 'is_starred', 'cover_image', 'ai_summary']);
+    const exists = existResult.goToNextRow();
+    let existingIsRead = 0;
+    let existingIsStarred = 0;
+    let existingCoverImage = '';
+    let existingAiSummary = '';
+    let existingId = -1;
+    if (exists) {
+      existingId = existResult.getLong(existResult.getColumnIndex('id'));
+      existingIsRead = existResult.getLong(existResult.getColumnIndex('is_read'));
+      existingIsStarred = existResult.getLong(existResult.getColumnIndex('is_starred'));
+      existingCoverImage = existResult.getString(existResult.getColumnIndex('cover_image'));
+      existingAiSummary = existResult.getString(existResult.getColumnIndex('ai_summary'));
     }
-    // 文章已存在（feedId+guid 冲突），更新内容字段但保留用户状态
-    const updateValues: relationalStore.ValuesBucket = {
-      title: article.title,
-      summary: article.summary,
-      content: article.content,
-      url: article.url,
-      author: article.author,
-      published_at: article.publishedAt,
-      cached_at: Date.now()
-    };
-    // 仅在有封面图时更新（避免覆盖已有封面为空）
-    if (article.coverImage) {
-      updateValues['cover_image'] = article.coverImage;
+    existResult.close();
+
+    if (!exists) {
+      // 新文章：插入
+      const values: relationalStore.ValuesBucket = {
+        feed_id: article.feedId,
+        guid: article.guid,
+        title: article.title,
+        summary: article.summary,
+        content: article.content,
+        url: article.url,
+        author: article.author,
+        published_at: article.publishedAt,
+        is_read: article.isRead,
+        is_starred: article.isStarred,
+        cover_image: article.coverImage || '',
+        cached_at: Date.now()
+      };
+      const rowId = await this.rdbStore.insert(Constants.TABLE_ARTICLES, values);
+      return rowId > 0 ? rowId : -1;
+    } else {
+      // 已有文章：更新内容字段，明确保留用户状态
+      const updateValues: relationalStore.ValuesBucket = {
+        title: article.title,
+        summary: article.summary,
+        content: article.content,
+        url: article.url,
+        author: article.author,
+        published_at: article.publishedAt,
+        is_read: existingIsRead,       // 保留已读状态
+        is_starred: existingIsStarred  // 保留收藏状态
+      };
+      // 仅在有新封面图且旧封面为空时更新
+      if (article.coverImage && !existingCoverImage) {
+        updateValues['cover_image'] = article.coverImage;
+      }
+      // 保留已有的 AI 总结（不覆盖）
+      if (existingAiSummary) {
+        updateValues['ai_summary'] = existingAiSummary;
+      }
+      const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+      pred.equalTo('id', existingId);
+      await this.rdbStore.update(updateValues, pred);
+      return -1; // 返回 -1 表示已存在（已更新）
     }
-    const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
-    pred.equalTo('feed_id', article.feedId).and().equalTo('guid', article.guid);
-    await this.rdbStore.update(updateValues, pred);
-    return -1; // 返回 -1 表示已存在（已更新）
   }
 
   async getArticlesByFeedId(feedId: number, limit: number = 50, offset: number = 0): Promise<Article[]> {

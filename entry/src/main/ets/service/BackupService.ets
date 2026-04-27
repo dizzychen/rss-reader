@@ -5,6 +5,10 @@ import { DatabaseHelper } from '../database/DatabaseHelper';
 import { SettingsService } from './SettingsService';
 import { Constants } from '../constants/Constants';
 import { Feed, FeedGroup } from '../model/Models';
+import { common } from '@kit.AbilityKit';
+import { fileIo } from '@kit.CoreFileKit';
+import { util } from '@kit.ArkTS';
+import { photoAccessHelper } from '@kit.MediaLibraryKit';
 
 /** 备份数据结构 */
 interface BackupData {
@@ -240,5 +244,123 @@ export class BackupService {
     }
 
     return result;
+  }
+
+  /**
+   * 保存备份到公共目录（Documents/rssreader-backup/）
+   * 应用卸载后数据不会丢失
+   * @param context UIAbility 上下文
+   * @returns 保存的文件路径
+   */
+  async saveBackupToPublic(context: common.UIAbilityContext): Promise<string> {
+    const backupJson = await this.generateBackup();
+    const filename = this.generateBackupFilename();
+
+    try {
+      // 获取公共目录的 Documents 目录
+      const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
+      const documentsUri = await phAccessHelper.getPublicDirectory(photoAccessHelper.DirectoryType.DIR_DOCUMENTS);
+
+      // 创建或打开备份目录
+      const backupDirUri = documentsUri + 'rssreader-backup/';
+      try {
+        await fileIo.mkdir(backupDirUri);
+      } catch (e) {
+        // 目录可能已存在，忽略错误
+      }
+
+      // 写入备份文件
+      const filePath = backupDirUri + filename;
+      let file: fileIo.File | undefined;
+      try {
+        file = await fileIo.open(filePath, fileIo.OpenMode.WRITE_ONLY | fileIo.OpenMode.CREATE | fileIo.OpenMode.TRUNC);
+        const encoder = new util.TextEncoder();
+        const buffer = encoder.encodeInto(backupJson);
+        await fileIo.write(file.fd, buffer.buffer);
+        await fileIo.close(file.fd);
+        file = undefined;
+        console.info('BackupService', 'Backup saved to public directory: ' + filePath);
+        return filePath;
+      } catch (e) {
+        if (file !== undefined) {
+          try { await fileIo.close(file.fd); } catch (_) {}
+        }
+        throw e;
+      }
+    } catch (e) {
+      console.error('BackupService', 'Save backup to public failed: ' + (e instanceof Error ? e.message : String(e)));
+      throw new Error('保存到公共目录失败：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  /**
+   * 从公共目录加载最新的备份文件
+   * @param context UIAbility 上下文
+   * @returns 备份 JSON 字符串
+   */
+  async loadBackupFromPublic(context: common.UIAbilityContext): Promise<string> {
+    try {
+      const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
+      const documentsUri = await phAccessHelper.getPublicDirectory(photoAccessHelper.DirectoryType.DIR_DOCUMENTS);
+      const backupDirUri = documentsUri + 'rssreader-backup/';
+
+      // 列出备份目录中的所有文件
+      const files = await fileIo.listFile(backupDirUri);
+      const backupFiles = files.filter((f: string) => f.endsWith('.json') && f.startsWith('rssreader-backup-'));
+
+      if (backupFiles.length === 0) {
+        throw new Error('未找到备份文件');
+      }
+
+      // 按文件名排序，获取最新的备份文件
+      backupFiles.sort();
+      const latestBackup = backupFiles[backupFiles.length - 1];
+      const filePath = backupDirUri + latestBackup;
+
+      // 读取备份文件内容
+      let file: fileIo.File | undefined;
+      try {
+        file = await fileIo.open(filePath, fileIo.OpenMode.READ_ONLY);
+        const stat = await fileIo.stat(file.fd);
+        if (stat.size === 0) {
+          await fileIo.close(file.fd);
+          file = undefined;
+          throw new Error('备份文件为空');
+        }
+        const buf = new ArrayBuffer(stat.size);
+        const bytesRead = await fileIo.read(file.fd, buf);
+        await fileIo.close(file.fd);
+        file = undefined;
+        const decoder = new util.TextDecoder('utf-8');
+        return decoder.decodeToString(new Uint8Array(buf, 0, bytesRead));
+      } catch (e) {
+        if (file !== undefined) {
+          try { await fileIo.close(file.fd); } catch (_) {}
+        }
+        throw e;
+      }
+    } catch (e) {
+      console.error('BackupService', 'Load backup from public failed: ' + (e instanceof Error ? e.message : String(e)));
+      throw new Error('从公共目录加载备份失败：' + (e instanceof Error ? e.message : String(e)));
+    }
+  }
+
+  /**
+   * 检查公共目录是否有备份文件
+   * @param context UIAbility 上下文
+   * @returns 是否有备份文件
+   */
+  async hasBackupInPublic(context: common.UIAbilityContext): Promise<boolean> {
+    try {
+      const phAccessHelper = photoAccessHelper.getPhotoAccessHelper(context);
+      const documentsUri = await phAccessHelper.getPublicDirectory(photoAccessHelper.DirectoryType.DIR_DOCUMENTS);
+      const backupDirUri = documentsUri + 'rssreader-backup/';
+
+      const files = await fileIo.listFile(backupDirUri);
+      const backupFiles = files.filter((f: string) => f.endsWith('.json') && f.startsWith('rssreader-backup-'));
+      return backupFiles.length > 0;
+    } catch (e) {
+      return false;
+    }
   }
 }

@@ -10,6 +10,7 @@ import { ProfileService } from '../service/ProfileService';
 import { AIService } from '../service/AIService';
 import { DateUtil } from '../utils/DateUtil';
 import { WorkSchedulerManager } from '../service/WorkSchedulerManager';
+import { BackupService } from '../service/BackupService';
 
 const DOMAIN = 0x0000;
 
@@ -32,6 +33,20 @@ export default class EntryAbility extends UIAbility {
     }
     // 初始化数据库
     await DatabaseHelper.getInstance().init(this.context);
+    // 检查是否需要提示用户恢复备份（数据库为空时）
+    try {
+      const feeds = await DatabaseHelper.getInstance().getAllFeeds();
+      if (feeds.length === 0) {
+        // 检查公共目录是否有备份
+        const hasBackup = await BackupService.getInstance().hasBackupInPublic(this.context);
+        if (hasBackup) {
+          // 发送事件，通知首页显示恢复提示
+          this.context.eventHub.emit('need_restore');
+        }
+      }
+    } catch (e) {
+      hilog.warn(DOMAIN, 'RSSReader', '检查数据库状态失败: %{public}s', String(e) as string);
+    }
     // 初始化设置
     await SettingsService.getInstance().init(this.context);
     // 初始化记忆系统（预加载 rawfile 模板，确保首次启动时写入沙箱目录）

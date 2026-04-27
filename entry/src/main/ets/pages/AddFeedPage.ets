@@ -7,7 +7,7 @@ import { FeedGroup } from '../model/Models';
 @Entry
 @Component
 struct AddFeedPage {
-  @State url: string = '';
+  @State url: string = 'http://193.112.128.33:8080/feed/all';
   @State isProcessing: boolean = false;
   @State errorMsg: string = '';
   @State groups: FeedGroup[] = [];

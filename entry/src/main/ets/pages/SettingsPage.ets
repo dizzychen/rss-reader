@@ -25,11 +25,28 @@ struct SettingsPage {
   @State isImporting: boolean = false;
   @State isBackingUp: boolean = false;
   @State isRestoring: boolean = false;
+  @State lastBackupTime: string = '';
   @State bgTaskStatus: string = '检查中...';
 
   aboutToAppear() {
     this.loadSettings();
     this.checkBgTaskStatus();
+    this.checkPublicBackup();
+  }
+
+  async checkPublicBackup() {
+    try {
+      const hasBackup = await BackupService.getInstance().hasBackupInPublic(
+        this.getUIContext().getHostContext() as common.UIAbilityContext
+      );
+      if (hasBackup) {
+        this.lastBackupTime = '检测到公共目录备份';
+      } else {
+        this.lastBackupTime = '暂无公共目录备份';
+      }
+    } catch (e) {
+      this.lastBackupTime = '检查备份失败';
+    }
   }
 
   async checkBgTaskStatus(): Promise<void> {
@@ -273,6 +290,30 @@ struct SettingsPage {
             // ===== 备份与恢复 =====
             this.sectionHeader('备份与恢复')
             Column() {
+              // 立即备份按钮
+              Row() {
+                Column({ space: 2 }) {
+                  Text('立即备份')
+                    .fontSize(15).fontColor($r('sys.color.ohos_id_color_text_primary'))
+                  Text(this.lastBackupTime || '点击立即创建备份')
+                    .fontSize(12).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                }
+                .layoutWeight(1).alignItems(HorizontalAlign.Start)
+                if (this.isBackingUp) {
+                  LoadingProgress().width(20).height(20)
+                } else {
+                  SymbolGlyph($r('sys.symbol.arrow_up'))
+                    .fontSize(18).fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+                }
+              }
+              .width('100%').height(60).padding({ left: 16, right: 16 })
+              .opacity(this.isBackingUp ? 0.5 : 1.0)
+              .onClick(() => {
+                if (!this.isBackingUp) this.doAutoBackup();
+              })
+
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+
               Row() {
                 Column({ space: 2 }) {
                   Text(this.isBackingUp ? '备份中...' : '完整备份')
@@ -517,6 +558,20 @@ struct SettingsPage {
       if (!r.cancelled && r.message) {
         this.getUIContext().getPromptAction().showToast({ message: r.message });
       }
+    } finally {
+      this.isBackingUp = false;
+    }
+  }
+
+  private async doAutoBackup() {
+    this.isBackingUp = true;
+    try {
+      const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+      const filePath = await BackupService.getInstance().saveBackupToPublic(ctx);
+      this.checkPublicBackup();
+      this.getUIContext().getPromptAction().showToast({ message: '备份完成：' + filePath });
+    } catch (e) {
+      this.getUIContext().getPromptAction().showToast({ message: `备份失败: ${e instanceof Error ? e.message : String(e)}` });
     } finally {
       this.isBackingUp = false;
     }

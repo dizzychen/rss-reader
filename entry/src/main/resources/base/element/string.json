@@ -11,6 +11,14 @@
     {
       "name": "EntryAbility_label",
       "value": "AIRSS"
+    },
+    {
+      "name": "reason_read_media",
+      "value": "需要读取公共目录中的备份文件以恢复数据"
+    },
+    {
+      "name": "reason_write_media",
+      "value": "需要写入公共目录以保存备份文件，即使卸载应用数据也不会丢失"
     }
   ]
 }
