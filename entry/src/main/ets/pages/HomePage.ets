@@ -66,6 +66,11 @@ export struct HomePage {
     super.aboutToDisappear?.();
     // 移除事件监听
     this.getUIContext().getHostContext().eventHub.off('need_restore');
+    // 清理定时器
+    if (this.syncTimerId !== -1) {
+      clearTimeout(this.syncTimerId);
+      this.syncTimerId = -1;
+    }
   }
 
   private async showRestoreDialog() {
@@ -99,13 +104,6 @@ export struct HomePage {
       }},
       thirdButton: { value: '取消', action: () => {} }
     });
-  }
-
-  aboutToDisappear() {
-    if (this.syncTimerId !== -1) {
-      clearTimeout(this.syncTimerId);
-      this.syncTimerId = -1;
-    }
   }
 
   /**

@@ -170,4 +170,24 @@ export class SettingsService {
   async setAutoBriefingEnabled(enabled: boolean): Promise<void> {
     await this.setSetting(Constants.PREF_AUTO_BRIEFING, enabled);
   }
+
+  // ===== 应用运行标记 =====
+
+  /**
+   * 检查应用是否曾经运行过
+   * 用于判断是否是首次安装后第一次启动
+   */
+  async hasRunBefore(): Promise<boolean> {
+    if (!this.prefs) return false;
+    const v = await this.prefs.get(Constants.PREF_HAS_RUN_BEFORE, false);
+    return typeof v === 'boolean' ? v : false;
+  }
+
+  /**
+   * 标记应用已经运行过
+   * 应在初始化完成后调用，用于区分首次安装和重装
+   */
+  async markAsRun(): Promise<void> {
+    await this.setSetting(Constants.PREF_HAS_RUN_BEFORE, true);
+  }
 }

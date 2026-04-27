@@ -33,22 +33,26 @@ export default class EntryAbility extends UIAbility {
     }
     // 初始化数据库
     await DatabaseHelper.getInstance().init(this.context);
-    // 检查是否需要提示用户恢复备份（数据库为空时）
+    // 初始化设置（需要在检查备份前初始化，以便读取 PREF_HAS_RUN_BEFORE 标记）
+    await SettingsService.getInstance().init(this.context);
+    // 检查是否需要提示用户恢复备份
+    // 只有在非首次运行且数据库为空时才提示（避免首次安装误触发）
     try {
-      const feeds = await DatabaseHelper.getInstance().getAllFeeds();
-      if (feeds.length === 0) {
-        // 检查公共目录是否有备份
-        const hasBackup = await BackupService.getInstance().hasBackupInPublic(this.context);
-        if (hasBackup) {
-          // 发送事件，通知首页显示恢复提示
-          this.context.eventHub.emit('need_restore');
+      const hasRunBefore = await SettingsService.getInstance().hasRunBefore();
+      if (hasRunBefore) {
+        const feeds = await DatabaseHelper.getInstance().getAllFeeds();
+        if (feeds.length === 0) {
+          // 检查公共目录是否有备份
+          const hasBackup = await BackupService.getInstance().hasBackupInPublic(this.context);
+          if (hasBackup) {
+            // 发送事件，通知首页显示恢复提示
+            this.context.eventHub.emit('need_restore');
+          }
         }
       }
     } catch (e) {
       hilog.warn(DOMAIN, 'RSSReader', '检查数据库状态失败: %{public}s', String(e) as string);
     }
-    // 初始化设置
-    await SettingsService.getInstance().init(this.context);
     // 初始化记忆系统（预加载 rawfile 模板，确保首次启动时写入沙箱目录）
     const soulTemplate = await this.loadRawfileAsString('memory/SOUL.md');
     const profileTemplate = await this.loadRawfileAsString('memory/PROFILE.md');
@@ -79,6 +83,12 @@ export default class EntryAbility extends UIAbility {
     this.runDailyMaintenance();
     // 恢复后台刷新任务（设备重启后保持周期任务）
     this.restoreBackgroundRefreshTask();
+    // 标记应用已经运行过（用于区分首次安装和重装）
+    try {
+      await SettingsService.getInstance().markAsRun();
+    } catch (e) {
+      hilog.warn(DOMAIN, 'RSSReader', '标记应用已运行失败: %{public}s', String(e));
+    }
   }
 
   /**

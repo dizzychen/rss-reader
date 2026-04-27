@@ -41,6 +41,7 @@ export class Constants {
   static readonly PREF_FONT_SIZE: string = 'font_size';
   static readonly PREF_OPEN_ORIGINAL: string = 'open_original_in_app';
   static readonly PREF_CACHE_COUNT: string = 'cache_count_per_feed';
+  static readonly PREF_HAS_RUN_BEFORE: string = 'has_run_before';  // 标记应用是否曾经运行过
 
   // 默认值
   static readonly DEFAULT_REFRESH_INTERVAL: number = 30; // 分钟

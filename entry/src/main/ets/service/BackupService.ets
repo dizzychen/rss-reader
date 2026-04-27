@@ -224,9 +224,10 @@ export class BackupService {
         if (s.aiProvider) {
           await settings.setAIProvider(s.aiProvider);
         }
-        if (s.aiApiKey) {
-          await settings.setAIApiKey(s.aiApiKey);
-        }
+        // 安全考虑：不恢复 API Key（与 generateBackup 中故意不导出保持一致）
+        // if (s.aiApiKey) {
+        //   await settings.setAIApiKey(s.aiApiKey);
+        // }
         if (s.aiBaseUrl) {
           await settings.setAIBaseUrl(s.aiBaseUrl);
         }
