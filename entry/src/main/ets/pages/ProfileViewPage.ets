@@ -60,6 +60,8 @@ struct ProfileViewPage {
   @State profileData: ProfileData | null = null;
   @State isLoading: boolean = true;
   @State isRegenerating: boolean = false;
+  @State showErrorState: boolean = false;
+  @State errorMessage: string = '';
 
   aboutToAppear() {
     this.loadProfile();
@@ -67,13 +69,17 @@ struct ProfileViewPage {
 
   async loadProfile() {
     this.isLoading = true;
+    this.showErrorState = false;
+    this.errorMessage = '';
+    
     try {
       this.content = await MemoryService.getInstance().getProfile();
       const lessons = await MemoryService.getInstance().getLessons();
+      
       if (this.content.trim()) {
         this.profileData = this.parseProfileMarkdown(this.content);
         // 解析 LESSONS 预览
-        if (lessons.trim()) {
+        if (lessons.trim() && this.profileData) {
           this.profileData.lessonsPreview = this.extractLessonsPreview(lessons);
           this.profileData.recHitRate = this.extractRecHitRate(lessons);
         }
@@ -81,6 +87,9 @@ struct ProfileViewPage {
     } catch (e) {
       this.content = '';
       this.profileData = null;
+      this.showErrorState = true;
+      this.errorMessage = e instanceof Error ? e.message : '加载画像数据失败';
+      console.error('ProfileViewPage', 'loadProfile failed:', e);
     } finally {
       this.isLoading = false;
     }
@@ -88,11 +97,16 @@ struct ProfileViewPage {
 
   async regenerate() {
     if (this.isRegenerating) return;
+    
     this.isRegenerating = true;
+    this.showErrorState = false;
+    this.errorMessage = '';
+    
     try {
       await ProfileService.getInstance().regenerate();
       this.content = await MemoryService.getInstance().getProfile();
       const lessons = await MemoryService.getInstance().getLessons();
+      
       if (this.content.trim()) {
         this.profileData = this.parseProfileMarkdown(this.content);
         if (lessons.trim() && this.profileData) {
@@ -100,10 +114,14 @@ struct ProfileViewPage {
           this.profileData.recHitRate = this.extractRecHitRate(lessons);
         }
       }
-      this.getUIContext().getPromptAction().showToast({ message: '画像已更新' });
+      
+      this.getUIContext()?.getPromptAction()?.showToast({ message: '画像已更新' });
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
-      this.getUIContext().getPromptAction().showToast({ message: `更新失败：${msg}` });
+      this.showErrorState = true;
+      this.errorMessage = `更新失败：${msg}`;
+      this.getUIContext()?.getPromptAction()?.showToast({ message: `更新失败：${msg}` });
+      console.error('ProfileViewPage', 'regenerate failed:', e);
     } finally {
       this.isRegenerating = false;
     }
@@ -126,48 +144,54 @@ struct ProfileViewPage {
       recHitRate: ''
     };
 
-    // 提取生成时间
-    const timeMatch = md.match(/生成时间[：:]\s*(.+)/);
-    if (timeMatch) {
-      data.generatedAt = timeMatch[1].trim();
-    }
-
-    // 提取阅读概览表格
-    const overviewSection = MarkdownUtil.extractSection(md, '## 阅读概览');
-    if (overviewSection) {
-      data.overviewRows = this.parseTableRows(overviewSection);
-    }
-
-    // 提取订阅源偏好
-    const feedSection = MarkdownUtil.extractSection(md, '## 订阅源偏好');
-    if (feedSection) {
-      data.feedWeights = this.parseWeightRows(feedSection);
-    }
-
-    // 提取话题偏好
-    const topicSection = MarkdownUtil.extractSection(md, '## 话题偏好');
-    if (topicSection) {
-      data.topicWeights = this.parseWeightRows(topicSection);
-    }
-
-    // 提取搜索兴趣
-    const searchSection = MarkdownUtil.extractSection(md, '## 搜索兴趣');
-    if (searchSection.trim()) {
-      const kwMatch = searchSection.match(/近期高频搜索[：:]\s*(.+)/);
-      if (kwMatch) {
-        data.searchKeywords = kwMatch[1].trim();
+    try {
+      // 提取生成时间 - 更健壮的正则匹配
+      const timeMatch = md.match(/生成时间[：:]\s*([^\n]+)/);
+      if (timeMatch && timeMatch[1]) {
+        data.generatedAt = timeMatch[1].trim();
       }
-    }
 
-    // 提取 AI 洞察
-    const aiSection = MarkdownUtil.extractSection(md, '## AI 洞察');
-    if (aiSection.trim()) {
-      const styleMatch = aiSection.match(/阅读风格[：:]\s*(.+)/);
-      if (styleMatch) data.readingStyle = styleMatch[1].trim();
-      const trendMatch = aiSection.match(/兴趣变化[：:]\s*(.+)/);
-      if (trendMatch) data.trend = trendMatch[1].trim();
-      const dislikeMatch = aiSection.match(/不感兴趣的内容[：:]\s*(.+)/);
-      if (dislikeMatch) data.dislikePatterns = dislikeMatch[1].trim();
+      // 提取阅读概览表格
+      const overviewSection = MarkdownUtil.extractSection(md, '## 阅读概览');
+      if (overviewSection) {
+        data.overviewRows = this.parseTableRows(overviewSection);
+      }
+
+      // 提取订阅源偏好
+      const feedSection = MarkdownUtil.extractSection(md, '## 订阅源偏好');
+      if (feedSection) {
+        data.feedWeights = this.parseWeightRows(feedSection);
+      }
+
+      // 提取话题偏好
+      const topicSection = MarkdownUtil.extractSection(md, '## 话题偏好');
+      if (topicSection) {
+        data.topicWeights = this.parseWeightRows(topicSection);
+      }
+
+      // 提取搜索兴趣
+      const searchSection = MarkdownUtil.extractSection(md, '## 搜索兴趣');
+      if (searchSection.trim()) {
+        const kwMatch = searchSection.match(/近期高频搜索[：:]\s*([^\n]+)/);
+        if (kwMatch && kwMatch[1]) {
+          data.searchKeywords = kwMatch[1].trim();
+        }
+      }
+
+      // 提取 AI 洞察
+      const aiSection = MarkdownUtil.extractSection(md, '## AI 洞察');
+      if (aiSection.trim()) {
+        const styleMatch = aiSection.match(/阅读风格[：:]\s*([^\n]+)/);
+        if (styleMatch && styleMatch[1]) data.readingStyle = styleMatch[1].trim();
+        
+        const trendMatch = aiSection.match(/兴趣变化[：:]\s*([^\n]+)/);
+        if (trendMatch && trendMatch[1]) data.trend = trendMatch[1].trim();
+        
+        const dislikeMatch = aiSection.match(/不感兴趣的内容[：:]\s*([^\n]+)/);
+        if (dislikeMatch && dislikeMatch[1]) data.dislikePatterns = dislikeMatch[1].trim();
+      }
+    } catch (e) {
+      console.error('ProfileViewPage', 'parseProfileMarkdown failed:', e);
     }
 
     return data;
@@ -179,15 +203,21 @@ struct ProfileViewPage {
   parseTableRows(section: string): TableRow[] {
     const rows: TableRow[] = [];
     const lines = section.split('\n');
+    
     for (const line of lines) {
       if (!line.startsWith('|') || line.startsWith('| 指标') || line.startsWith('|---')) {
         continue;
       }
+      
       const parts = line.split('|').map(s => s.trim()).filter(s => s.length > 0);
       if (parts.length >= 2) {
-        rows.push({ label: parts[0], value: parts[1] });
+        rows.push({ 
+          label: parts[0] || '未知指标', 
+          value: parts[1] || '未知值' 
+        });
       }
     }
+    
     return rows;
   }
 
@@ -197,22 +227,26 @@ struct ProfileViewPage {
   parseWeightRows(section: string): WeightRow[] {
     const rows: WeightRow[] = [];
     const lines = section.split('\n');
+    
     for (const line of lines) {
       if (!line.startsWith('|') || line.startsWith('| 名称') || line.startsWith('|---')) {
         continue;
       }
+      
       const parts = line.split('|').map(s => s.trim()).filter(s => s.length > 0);
       if (parts.length >= 3) {
-        const name = parts[0];
+        const name = parts[0] || '未知名称';
         const weightParts = parts[1].split(' ');
         const weightStr = weightParts[weightParts.length - 1];
         const weight = parseFloat(weightStr);
-        const date = parts[2];
+        const date = parts[2] || '未知日期';
+        
         if (name && !isNaN(weight)) {
           rows.push({ name, weight, date });
         }
       }
     }
+    
     return rows;
   }
 
@@ -226,7 +260,12 @@ struct ProfileViewPage {
             .fontColor([$r('sys.color.ohos_id_color_text_primary')])
         }
         .width(36).height(36).backgroundColor(Color.Transparent)
-        .onClick(() => this.getUIContext().getRouter().back())
+        .onClick(() => {
+          const router = this.getUIContext()?.getRouter();
+          if (router) {
+            router.back();
+          }
+        })
 
         Text('阅读画像')
           .fontSize(18)
@@ -253,22 +292,49 @@ struct ProfileViewPage {
 
       Divider().color($r('sys.color.ohos_id_color_list_separator'))
 
-      if (this.isLoading) {
+      if (this.showErrorState) {
+        // 错误状态
+        Column({ space: 16 }) {
+          Text('加载失败')
+            .fontSize(16)
+            .fontColor($r('sys.color.ohos_id_color_warning'))
+          Text(this.errorMessage)
+            .fontSize(14)
+            .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+            .textAlign(TextAlign.Center)
+            .padding({ left: 32, right: 32 })
+          Button('重试')
+            .fontSize(14)
+            .onClick(() => this.loadProfile())
+        }
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
+      } else if (this.isLoading) {
+        // 加载状态
         Column() {
           LoadingProgress().width(40).height(40)
         }
-        .width('100%').layoutWeight(1).justifyContent(FlexAlign.Center)
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
       } else if (!this.content.trim() || this.profileData === null) {
+        // 空数据状态
         Column({ space: 16 }) {
-          Text('暂无画像数据').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          Text('暂无画像数据')
+            .fontSize(16)
+            .fontColor($r('sys.color.ohos_id_color_text_secondary'))
           Text('阅读更多文章后，点击「重新生成」生成你的阅读画像')
             .fontSize(14)
             .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
             .textAlign(TextAlign.Center)
             .padding({ left: 32, right: 32 })
         }
-        .width('100%').layoutWeight(1).justifyContent(FlexAlign.Center)
+        .width('100%')
+        .layoutWeight(1)
+        .justifyContent(FlexAlign.Center)
       } else {
+        // 正常数据展示
         Scroll() {
           Column({ space: 16 }) {
             // 生成时间
@@ -289,14 +355,14 @@ struct ProfileViewPage {
             // 订阅源偏好
             if (this.profileData.feedWeights.length > 0) {
               SectionCardView({ label: '订阅源偏好' }) {
-                this.weightList(this.profileData!.feedWeights)
+                this.weightList(this.profileData.feedWeights)
               }
             }
 
             // 话题偏好
             if (this.profileData.topicWeights.length > 0) {
               SectionCardView({ label: '话题偏好' }) {
-                this.weightList(this.profileData!.topicWeights)
+                this.weightList(this.profileData.topicWeights)
               }
             }
 
@@ -491,6 +557,7 @@ struct ProfileViewPage {
     const lines = lessons.split('\n');
     const previews: string[] = [];
     let currentSection = '';
+    
     for (const line of lines) {
       if (line.startsWith('## ') && !line.includes('推荐效果追踪')) {
         currentSection = line.replace('## ', '').trim();
@@ -501,6 +568,7 @@ struct ProfileViewPage {
         }
       }
     }
+    
     return previews.length > 0 ? previews.join('\n') : '';
   }
 

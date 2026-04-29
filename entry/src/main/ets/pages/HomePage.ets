@@ -428,12 +428,24 @@ export struct HomePage {
       const result = await recommendSvc.scoreAndSort(allArticles, this.feedMap, page, this.pageSize);
       this.recommendPage = 1;
       this.hasMore = result.totalCount > this.pageSize;
+      // 【修复】本地评分 also 设置推荐理由，确保角标显示
+      for (const a of result.articles) {
+        if (!a.recommendReason) {
+          a.recommendReason = '推荐';
+        }
+      }
       return result.articles;
     } else {
       // 分页取（从缓存评分结果切片）
       const result = await recommendSvc.scoreAndSort([], this.feedMap, this.recommendPage, this.pageSize);
       this.recommendPage++;
       this.hasMore = result.articles.length >= this.pageSize;
+      // 【修复】本地评分 also 设置推荐理由，确保角标显示
+      for (const a of result.articles) {
+        if (!a.recommendReason) {
+          a.recommendReason = '推荐';
+        }
+      }
       return result.articles;
     }
   }
