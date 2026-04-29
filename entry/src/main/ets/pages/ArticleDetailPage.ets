@@ -455,12 +455,13 @@ struct ArticleDetailPage {
             // RSS 内容模式（原有逻辑）
             Scroll() {
               Column({ space: 0 }) {
-                Text(this.article.title)
+                Text(RssService.getInstance().convertEmojiShortcodes(this.article.title))
                   .fontSize(Constants.FONT_SIZES[this.fontSizeIndex] + 4)
                   .fontWeight(FontWeight.Bold)
                   .fontColor($r('sys.color.ohos_id_color_text_primary'))
                   .lineHeight((Constants.FONT_SIZES[this.fontSizeIndex] + 4) * 1.5)
                   .width('100%')
+                  .fontFamily('HarmonyOS Sans, Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji')
 
                 Row({ space: 8 }) {
                   if (this.feedTitle) {
@@ -553,15 +554,13 @@ struct ArticleDetailPage {
                         .wordBreak(WordBreak.BREAK_WORD)
                         .margin({ bottom: 16 })
                     } else if (block.type === 'image') {
-                      Row() {
-                        Image(block.content)
-                          .width('50%')
-                          .objectFit(ImageFit.Contain)
-                          .borderRadius(8)
-                      }
-                      .width('100%')
-                      .justifyContent(FlexAlign.Center)
-                      .margin({ top: 8, bottom: 16 })
+                      Image(block.content)
+                        .width('100%')
+                        .height('auto')
+                        .objectFit(ImageFit.Contain)
+                        .borderRadius(8)
+                        .margin({ top: 8, bottom: 16 })
+                        .constraintSize({ maxWidth: '100%' })
                     }
                   }, (block: ContentBlock, index: number) => `${index}-${block.type}`)
                 } else {

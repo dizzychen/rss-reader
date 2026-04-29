@@ -814,7 +814,8 @@ ${dislikedList}
     const lines = sectionContent.split('\n');
     let replaced = false;
     for (let i = 0; i < lines.length; i++) {
-      if (lines[i].startsWith('源偏好:')) {
+      // 【修复】使用更宽泛的匹配条件，识别各种格式的"源偏好"行
+      if (/^(源偏好|Feed Preference|feed)[:：]/.test(lines[i])) {
         lines[i] = newLine;
         replaced = true;
         break;

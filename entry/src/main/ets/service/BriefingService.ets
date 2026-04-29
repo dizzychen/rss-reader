@@ -135,35 +135,47 @@ export class BriefingService {
 
       // 映射推荐文章
       if (Array.isArray(parsed.recommended)) {
+        const seenIds = new Set<number>();
         for (const r of parsed.recommended) {
           const idx = (r.index ?? 0) - 1; // 转为 0-based
           if (idx >= 0 && idx < articles.length) {
             const a = articles[idx];
-            const level = this.normalizeLevel(r.level);
-            const item: BriefingItem = {
-              articleId: a.id ?? -1,
-              title: r.title ?? a.title,
-              source: r.source ?? a.feedTitle ?? '',
-              reason: r.reason ?? '',
-              level: level
-            };
-            defaultData.recommended.push(item);
+            const articleId = a.id ?? -1;
+            // 【修复】去重：跳过已添加的 articleId
+            if (articleId !== -1 && !seenIds.has(articleId)) {
+              seenIds.add(articleId);
+              const level = this.normalizeLevel(r.level);
+              const item: BriefingItem = {
+                articleId: articleId,
+                title: r.title ?? a.title,
+                source: r.source ?? a.feedTitle ?? '',
+                reason: r.reason ?? '',
+                level: level
+              };
+              defaultData.recommended.push(item);
+            }
           }
         }
       }
 
       // 映射可跳过文章
       if (Array.isArray(parsed.skippable)) {
+        const seenSkipIds = new Set<number>();
         for (const s of parsed.skippable) {
           const idx = (s.index ?? 0) - 1;
           if (idx >= 0 && idx < articles.length) {
             const a = articles[idx];
-            const skip: BriefingSkipItem = {
-              articleId: a.id ?? -1,
-              title: s.title ?? a.title,
-              reason: s.reason ?? ''
-            };
-            defaultData.skippable.push(skip);
+            const articleId = a.id ?? -1;
+            // 【修复】去重：跳过已添加的 articleId
+            if (articleId !== -1 && !seenSkipIds.has(articleId)) {
+              seenSkipIds.add(articleId);
+              const skip: BriefingSkipItem = {
+                articleId: articleId,
+                title: s.title ?? a.title,
+                reason: s.reason ?? ''
+              };
+              defaultData.skippable.push(skip);
+            }
           }
         }
       }

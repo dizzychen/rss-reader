@@ -20,7 +20,7 @@ export struct ArticleItemComponent {
       Row({ space: 12 }) {
         // 文章信息
         Column({ space: 6 }) {
-          Text(this.article.title)
+          Text(RssService.getInstance().convertEmojiShortcodes(this.article.title))
             .fontSize(15)
             .fontWeight(this.article.isRead === 1 ? FontWeight.Normal : FontWeight.Medium)
             .fontColor(this.article.isRead === 1
@@ -29,6 +29,7 @@ export struct ArticleItemComponent {
             .maxLines(2)
             .textOverflow({ overflow: TextOverflow.Ellipsis })
             .lineHeight(20)
+            .fontFamily('HarmonyOS Sans, Apple Color Emoji, Segoe UI Emoji, Noto Color Emoji')
 
           if (this.article.summary) {
             Text(this.article.summary)

@@ -303,8 +303,8 @@ export class RssService {
 
       const article: ParsedArticle = {
         guid: this.normalizeGuid(guid),
-        title: title,
-        summary: this.stripHtml(description).slice(0, 300),
+        title: this.convertEmojiShortcodes(this.stripHtml(title)),
+        summary: this.convertEmojiShortcodes(this.stripHtml(description)).slice(0, 300),
         content: contentEncoded || description || '',
         url: link,
         author: author,
@@ -376,8 +376,8 @@ export class RssService {
 
       const article: ParsedArticle = {
         guid: this.normalizeGuid(id || url || title),
-        title: this.stripHtml(title),
-        summary: this.stripHtml(summary || title).slice(0, 300),
+        title: this.convertEmojiShortcodes(this.stripHtml(title)),
+        summary: this.convertEmojiShortcodes(this.stripHtml(summary || title)).slice(0, 300),
         content: content || summary || `<p>${title}</p>`,
         url: url,
         author: author,
@@ -476,8 +476,8 @@ export class RssService {
 
       const article: ParsedArticle = {
         guid: this.normalizeGuid(about || link || title),
-        title: title,
-        summary: this.stripHtml(description).slice(0, 300),
+        title: this.convertEmojiShortcodes(this.stripHtml(title)),
+        summary: this.convertEmojiShortcodes(this.stripHtml(description)).slice(0, 300),
         content: description || `<p>${title}</p>`,
         url: link,
         author: author,
@@ -517,6 +517,57 @@ export class RssService {
       .replace(/&#39;/g, "'")
       .replace(/&nbsp;/g, ' ')
       .trim();
+  }
+
+  /**
+   * 将常见的 emoji 短代码（如 :fire:、:smile:）转换为实际 emoji
+   * 支持 GitHub Flavored Markdown 风格的 emoji 短代码
+   */
+  convertEmojiShortcodes(text: string): string {
+    // 使用数组而非 Object.entries()，以兼容 ArkTS
+    const emojiMap = [
+      [':fire:', '🔥'],
+      [':thumbsup:', '👍'],
+      [':thumbsdown:', '👎'],
+      [':smile:', '😊'],
+      [':laughing:', '😄'],
+      [':wink:', '😉'],
+      [':blush:', '😊'],
+      [':smiley:', '😃'],
+      [':heart:', '❤️'],
+      [':broken_heart:', '💔'],
+      [':star:', '⭐'],
+      [':sparkles:', '✨'],
+      [':tada:', '🎉'],
+      [':clap:', '👏'],
+      [':rocket:', '🚀'],
+      [':bulb:', '💡'],
+      [':warning:', '⚠️'],
+      [':heavy_check_mark:', '✅'],
+      [':x:', '❌'],
+      [':arrow_right:', '➡️'],
+      [':arrow_left:', '⬅️'],
+      [':arrow_up:', '⬆️'],
+      [':arrow_down:', '⬇️'],
+      [':book:', '📖'],
+      [':computer:', '💻'],
+      [':gear:', '⚙️'],
+      [':lock:', '🔒'],
+      [':unlock:', '🔓'],
+      [':key:', '🔑'],
+      [':link:', '🔗'],
+      [':mag:', '🔍'],
+      [':pencil:', '✏️'],
+      [':trash:', '🗑️'],
+    ];
+
+    let result = text;
+    for (let i = 0; i < emojiMap.length; i++) {
+      const shortcode = emojiMap[i][0] as string;
+      const emoji = emojiMap[i][1] as string;
+      result = result.split(shortcode).join(emoji);
+    }
+    return result;
   }
 
   private normalizeGuid(guid: string): string {

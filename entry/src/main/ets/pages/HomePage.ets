@@ -57,15 +57,21 @@ export struct HomePage {
     this.loadAISettings();
     this.initLoad();
     // 监听恢复提示事件
-    this.getUIContext().getHostContext().eventHub.on('need_restore', () => {
-      this.showRestoreDialog();
-    });
+    const hostContext = this.getUIContext()?.getHostContext();
+    if (hostContext) {
+      hostContext.eventHub.on('need_restore', () => {
+        this.showRestoreDialog();
+      });
+    }
   }
 
   aboutToDisappear() {
     super.aboutToDisappear?.();
     // 移除事件监听
-    this.getUIContext().getHostContext().eventHub.off('need_restore');
+    const hostContext = this.getUIContext()?.getHostContext();
+    if (hostContext) {
+      hostContext.eventHub.off('need_restore');
+    }
     // 清理定时器
     if (this.syncTimerId !== -1) {
       clearTimeout(this.syncTimerId);
@@ -98,11 +104,7 @@ export struct HomePage {
           }
         }
       },
-      secondaryButton: { value: '手动恢复', action: () => {
-        // 跳转到设置页面手动恢复
-        this.getUIContext().getRouter().pushUrl({ url: 'pages/SettingsPage' });
-      }},
-      thirdButton: { value: '取消', action: () => {} }
+      secondaryButton: { value: '取消', action: () => {} }
     });
   }
 

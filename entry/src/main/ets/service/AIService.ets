@@ -466,15 +466,22 @@ ${articleSummaries}`;
    */
   private parseRankResponse(response: string, articles: Article[]): number[] {
     try {
-      // 提取数字序列（如 "5,2,1,3,4" 或 "5、2、1、3、4"）
-      const matches = response.match(/[\d,，、\s]+/);
-      if (!matches) {
+      // 【修复】改进正则：提取所有数字序列，取最后一个（AI 通常把序号放在最后）
+      const normalized = response.replace(/[\r\n]+/g, ' ').trim();
+      
+      // 提取所有数字序列
+      const allMatches = normalized.match(/[\d,，、\s]+/g);
+      if (!allMatches || allMatches.length === 0) {
         return [];
       }
+      
+      // 取最后一个数字序列（最可能包含序号）
+      const lastMatch = allMatches[allMatches.length - 1];
+      
       const indices: number[] = [];
-      const parts = matches[0].split(/[,，、\s]+/);
-      for (const part of parts) {
-        const trimmed = part.trim();
+      const parts = lastMatch.split(/[,，、\s]+/);
+      for (let i = 0; i < parts.length; i++) {
+        const trimmed = parts[i].trim();
         if (trimmed.length > 0) {
           const idx = parseInt(trimmed, 10) - 1;  // 转为 0-based 索引
           if (idx >= 0 && idx < articles.length) {
@@ -484,8 +491,9 @@ ${articleSummaries}`;
       }
 
       const result: number[] = [];
-      for (const i of indices) {
-        const id = articles[i].id;
+      for (let i = 0; i < indices.length; i++) {
+        const articleIdx = indices[i];
+        const id = articles[articleIdx].id;
         if (id !== undefined && id !== -1) {
           result.push(id);
         }

@@ -60,6 +60,11 @@ export class RecommendService {
       return { articles: sliced, totalCount: this.scoredCache.length };
     }
 
+    // 【修复】重新评分前先清空旧缓存，防止并发读到脏数据
+    if (page === 0) {
+      this.scoredCache = [];
+    }
+
     // 加载画像数据（带缓存）
     await this.ensureProfileCache();
 

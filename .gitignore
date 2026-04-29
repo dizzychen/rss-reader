@@ -49,7 +49,7 @@ oh-package-lock.json5
 /docs/demo/
 
 # ===== Claude Code 本地配置 =====
-/.claude/settings.local.json
+/.claude
 
 # ===== CodeBuddy =====
 /.codebuddy
