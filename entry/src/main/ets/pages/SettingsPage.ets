@@ -41,9 +41,9 @@ struct SettingsPage {
         this.getUIContext().getHostContext() as common.UIAbilityContext
       );
       if (hasBackup) {
-        this.lastBackupTime = '检测到公共目录备份';
+        this.lastBackupTime = '检测到本地备份';
       } else {
-        this.lastBackupTime = '暂无公共目录备份';
+        this.lastBackupTime = '暂无本地备份';
       }
     } catch (e) {
       this.lastBackupTime = '检查备份失败';

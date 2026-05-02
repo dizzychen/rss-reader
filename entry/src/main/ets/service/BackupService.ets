@@ -8,7 +8,6 @@ import { Feed, FeedGroup } from '../model/Models';
 import { common } from '@kit.AbilityKit';
 import { fileIo } from '@kit.CoreFileKit';
 import { util } from '@kit.ArkTS';
-import { photoAccessHelper } from '@kit.MediaLibraryKit';
 
 /** 备份数据结构 */
 interface BackupData {

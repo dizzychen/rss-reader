@@ -1,7 +1,7 @@
 import { relationalStore } from '@kit.ArkData';
 import { common } from '@kit.AbilityKit';
 import { Constants } from '../constants/Constants';
-import { Feed, Article, FeedGroup, Tag } from '../model/Models';
+import { Article, Feed, FeedGroup, Tag } from '../model/Models';
 
 const TAG = 'DatabaseHelper';
 
@@ -398,7 +398,8 @@ export class DatabaseHelper {
         author: article.author,
         published_at: article.publishedAt,
         is_read: existingIsRead,       // 保留已读状态
-        is_starred: existingIsStarred  // 保留收藏状态
+        is_starred: existingIsStarred, // 保留收藏状态
+        cached_at: Date.now()          // 更新缓存时间
       };
       // 仅在有新封面图且旧封面为空时更新
       if (article.coverImage && !existingCoverImage) {

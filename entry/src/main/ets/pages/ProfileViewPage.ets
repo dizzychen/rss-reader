@@ -144,54 +144,56 @@ struct ProfileViewPage {
       recHitRate: ''
     };
 
-    try {
-      // 提取生成时间 - 更健壮的正则匹配
-      const timeMatch = md.match(/生成时间[：:]\s*([^\n]+)/);
-      if (timeMatch && timeMatch[1]) {
-        data.generatedAt = timeMatch[1].trim();
+    // 提取生成时间 - 更健壮的正则匹配
+    const timeMatch = md.match(/生成时间[：:]\s*([^\n]+)/);
+    if (timeMatch && timeMatch[1]) {
+      data.generatedAt = timeMatch[1].trim();
+    }
+
+    // 提取阅读概览表格
+    const overviewSection = MarkdownUtil.extractSection(md, '## 阅读概览');
+    if (overviewSection) {
+      data.overviewRows = this.parseTableRows(overviewSection);
+    }
+
+    // 提取订阅源偏好
+    const feedSection = MarkdownUtil.extractSection(md, '## 订阅源偏好');
+    if (feedSection) {
+      data.feedWeights = this.parseWeightRows(feedSection);
+    }
+
+    // 提取话题偏好
+    const topicSection = MarkdownUtil.extractSection(md, '## 话题偏好');
+    if (topicSection) {
+      data.topicWeights = this.parseWeightRows(topicSection);
+    }
+
+    // 提取搜索兴趣
+    const searchSection = MarkdownUtil.extractSection(md, '## 搜索兴趣');
+    if (searchSection.trim()) {
+      const kwMatch = searchSection.match(/近期高频搜索[：:]\s*([^\n]+)/);
+      if (kwMatch && kwMatch[1]) {
+        data.searchKeywords = kwMatch[1].trim();
+      }
+    }
+
+    // 提取 AI 洞察
+    const aiSection = MarkdownUtil.extractSection(md, '## AI 洞察');
+    if (aiSection.trim()) {
+      const styleMatch = aiSection.match(/阅读风格[：:]\s*([^\n]+)/);
+      if (styleMatch && styleMatch[1]) {
+        data.readingStyle = styleMatch[1].trim();
       }
 
-      // 提取阅读概览表格
-      const overviewSection = MarkdownUtil.extractSection(md, '## 阅读概览');
-      if (overviewSection) {
-        data.overviewRows = this.parseTableRows(overviewSection);
+      const trendMatch = aiSection.match(/兴趣变化[：:]\s*([^\n]+)/);
+      if (trendMatch && trendMatch[1]) {
+        data.trend = trendMatch[1].trim();
       }
 
-      // 提取订阅源偏好
-      const feedSection = MarkdownUtil.extractSection(md, '## 订阅源偏好');
-      if (feedSection) {
-        data.feedWeights = this.parseWeightRows(feedSection);
+      const dislikeMatch = aiSection.match(/不感兴趣的内容[：:]\s*([^\n]+)/);
+      if (dislikeMatch && dislikeMatch[1]) {
+        data.dislikePatterns = dislikeMatch[1].trim();
       }
-
-      // 提取话题偏好
-      const topicSection = MarkdownUtil.extractSection(md, '## 话题偏好');
-      if (topicSection) {
-        data.topicWeights = this.parseWeightRows(topicSection);
-      }
-
-      // 提取搜索兴趣
-      const searchSection = MarkdownUtil.extractSection(md, '## 搜索兴趣');
-      if (searchSection.trim()) {
-        const kwMatch = searchSection.match(/近期高频搜索[：:]\s*([^\n]+)/);
-        if (kwMatch && kwMatch[1]) {
-          data.searchKeywords = kwMatch[1].trim();
-        }
-      }
-
-      // 提取 AI 洞察
-      const aiSection = MarkdownUtil.extractSection(md, '## AI 洞察');
-      if (aiSection.trim()) {
-        const styleMatch = aiSection.match(/阅读风格[：:]\s*([^\n]+)/);
-        if (styleMatch && styleMatch[1]) data.readingStyle = styleMatch[1].trim();
-        
-        const trendMatch = aiSection.match(/兴趣变化[：:]\s*([^\n]+)/);
-        if (trendMatch && trendMatch[1]) data.trend = trendMatch[1].trim();
-        
-        const dislikeMatch = aiSection.match(/不感兴趣的内容[：:]\s*([^\n]+)/);
-        if (dislikeMatch && dislikeMatch[1]) data.dislikePatterns = dislikeMatch[1].trim();
-      }
-    } catch (e) {
-      console.error('ProfileViewPage', 'parseProfileMarkdown failed:', e);
     }
 
     return data;

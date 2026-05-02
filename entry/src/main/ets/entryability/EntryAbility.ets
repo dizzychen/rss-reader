@@ -5,7 +5,7 @@ import { util } from '@kit.ArkTS';
 import { notificationManager } from '@kit.NotificationKit';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { SettingsService } from '../service/SettingsService';
-import { MemoryService, setProfileRegenerateCallback, setProfileQuickRefreshCallback } from '../service/MemoryService';
+import { MemoryService, setProfileQuickRefreshCallback, setProfileRegenerateCallback } from '../service/MemoryService';
 import { ProfileService } from '../service/ProfileService';
 import { AIService } from '../service/AIService';
 import { DateUtil } from '../utils/DateUtil';
@@ -42,7 +42,7 @@ export default class EntryAbility extends UIAbility {
       if (hasRunBefore) {
         const feeds = await DatabaseHelper.getInstance().getAllFeeds();
         if (feeds.length === 0) {
-          // 检查公共目录是否有备份
+          // 检查沙箱目录是否有备份
           const hasBackup = await BackupService.getInstance().hasBackupInPublic(this.context);
           if (hasBackup) {
             // 发送事件，通知首页显示恢复提示

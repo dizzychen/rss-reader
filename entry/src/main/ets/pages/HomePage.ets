@@ -1,12 +1,11 @@
 // 首页：展示所有文章（聚合视图）
-import { Article, Feed, copyArticle } from '../model/Models';
+import { Article, copyArticle, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedRefreshService } from '../service/FeedRefreshService';
 import { MemoryService } from '../service/MemoryService';
 import { SettingsService } from '../service/SettingsService';
 import { RecommendService } from '../service/RecommendService';
 import { AIService } from '../service/AIService';
-import { BriefingService } from '../service/BriefingService';
 import { Constants } from '../constants/Constants';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
 import { BackupService } from '../service/BackupService';
@@ -83,7 +82,7 @@ export struct HomePage {
     const ctx = this.getUIContext();
     ctx.showAlertDialog({
       title: '发现备份数据',
-      message: '检测到您可能是重装了应用，是否从公共目录的备份恢复数据？',
+      message: '检测到您可能是重装了应用，是否从本地备份恢复数据？',
       primaryButton: {
         value: '立即恢复',
         action: async () => {
@@ -428,24 +427,12 @@ export struct HomePage {
       const result = await recommendSvc.scoreAndSort(allArticles, this.feedMap, page, this.pageSize);
       this.recommendPage = 1;
       this.hasMore = result.totalCount > this.pageSize;
-      // 【修复】本地评分 also 设置推荐理由，确保角标显示
-      for (const a of result.articles) {
-        if (!a.recommendReason) {
-          a.recommendReason = '推荐';
-        }
-      }
       return result.articles;
     } else {
       // 分页取（从缓存评分结果切片）
       const result = await recommendSvc.scoreAndSort([], this.feedMap, this.recommendPage, this.pageSize);
       this.recommendPage++;
       this.hasMore = result.articles.length >= this.pageSize;
-      // 【修复】本地评分 also 设置推荐理由，确保角标显示
-      for (const a of result.articles) {
-        if (!a.recommendReason) {
-          a.recommendReason = '推荐';
-        }
-      }
       return result.articles;
     }
   }

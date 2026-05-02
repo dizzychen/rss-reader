@@ -117,6 +117,13 @@ export class RecommendService {
     // 惩罚后重排
     articles.sort((a, b) => (b.recommendScore ?? 0) - (a.recommendScore ?? 0));
 
+    // 确保所有文章都有推荐理由（兜底）
+    for (const article of articles) {
+      if (!article.recommendReason) {
+        article.recommendReason = '推荐';
+      }
+    }
+
     // 缓存完整评分结果
     this.scoredCache = articles;
 

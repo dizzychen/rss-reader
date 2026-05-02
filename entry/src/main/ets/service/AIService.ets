@@ -466,20 +466,24 @@ ${articleSummaries}`;
    */
   private parseRankResponse(response: string, articles: Article[]): number[] {
     try {
-      // 【修复】改进正则：提取所有数字序列，取最后一个（AI 通常把序号放在最后）
+      // 提取所有数字序列，取最长的一个（AI 输出的序号列表通常最长）
       const normalized = response.replace(/[\r\n]+/g, ' ').trim();
-      
-      // 提取所有数字序列
+
       const allMatches = normalized.match(/[\d,，、\s]+/g);
       if (!allMatches || allMatches.length === 0) {
         return [];
       }
-      
-      // 取最后一个数字序列（最可能包含序号）
-      const lastMatch = allMatches[allMatches.length - 1];
+
+      // 按数字数量降序排列，取包含最多数字的序列（最可能是序号列表）
+      allMatches.sort((a, b) => {
+        const countA = (a.match(/\d+/g) || []).length;
+        const countB = (b.match(/\d+/g) || []).length;
+        return countB - countA;
+      });
+      const bestMatch = allMatches[0];
       
       const indices: number[] = [];
-      const parts = lastMatch.split(/[,，、\s]+/);
+      const parts = bestMatch.split(/[,，、\s]+/);
       for (let i = 0; i < parts.length; i++) {
         const trimmed = parts[i].trim();
         if (trimmed.length > 0) {

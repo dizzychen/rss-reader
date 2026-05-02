@@ -1,5 +1,4 @@
 // 添加订阅源页面
-import { router } from '@kit.ArkUI';
 import { RssService } from '../service/RssService';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedGroup } from '../model/Models';
@@ -7,7 +6,7 @@ import { FeedGroup } from '../model/Models';
 @Entry
 @Component
 struct AddFeedPage {
-  @State url: string = 'http://193.112.128.33:8080/feed/all';
+  @State url: string = '';
   @State isProcessing: boolean = false;
   @State errorMsg: string = '';
   @State groups: FeedGroup[] = [];
