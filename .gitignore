@@ -12,7 +12,6 @@
 **/.test
 **/.preview
 /.appanalyzer
-/.idea
 # ===== 签名证书与密钥 =====
 *.p12
 *.cer
