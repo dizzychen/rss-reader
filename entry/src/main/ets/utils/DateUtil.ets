@@ -65,6 +65,19 @@ export class DateUtil {
   }
 
   /**
+   * 计算两个 YYYY-MM-DD 日期之间相差的天数（绝对值）
+   */
+  static daysBetween(dateA: string, dateB: string): number {
+    try {
+      const a = new Date(dateA).getTime();
+      const b = new Date(dateB).getTime();
+      return Math.abs(Math.round((b - a) / (24 * 60 * 60 * 1000)));
+    } catch {
+      return 0;
+    }
+  }
+
+  /**
    * 获取当前时间戳（ms）
    */
   static now(): number {

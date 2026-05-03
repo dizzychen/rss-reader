@@ -68,6 +68,8 @@ export class Constants {
   static readonly MEMORY_SOUL_FILE: string = 'memory/SOUL.md';
   static readonly MEMORY_PROFILE_FILE: string = 'memory/PROFILE.md';
   static readonly MEMORY_LESSONS_FILE: string = 'memory/LESSONS.md';
+  static readonly MEMORY_CONSOLIDATED_FILE: string = 'memory/MEMORY.md';
+  static readonly LEARNING_STATE_FILE: string = 'memory/LEARNING.json';
 
   // 记忆系统 Preferences 键名
   static readonly PREF_AI_API_KEY: string = 'ai_api_key';
@@ -143,6 +145,15 @@ export class Constants {
   static readonly BADGE_TOPIC_MATCH: string = '话题匹配';
   static readonly BADGE_CONTENT_MATCH: string = '内容相关';
   static readonly BADGE_LATEST: string = '最新发布';
+  // ===== 自学习引擎 =====
+
+  static readonly LEARNING_RATE: number = 0.05; // 在线学习率（每次反馈的权重调整步长）
+  static readonly LEARNING_MIN_CONFIDENCE: number = 0.3; // 权重置信度阈值：低于此值向默认回归
+  static readonly LEARNING_MATURE_THRESHOLD: number = 100; // 成熟阈值：经过此数次学习后置信度接近 1
+  static readonly LEARNING_TOPIC_GROWTH_THRESHOLD: number = 1.05; // 话题增长判定倍率
+  static readonly LEARNING_TOPIC_DECLINE_THRESHOLD: number = 0.95; // 话题衰减判定倍率
+  static readonly LEARNING_CONSECUTIVE_DAYS: number = 3; // 连续增长/衰减天数触发趋势判定
+  static readonly LEARNING_FEED_ENGAGEMENT_MIN: number = 0.1; // 来源最低互动率（低于此不计入优质来源）
 
   // AI 画像综合
   static readonly AI_PROFILE_MAX_TOKENS: number = 800;

@@ -3,6 +3,7 @@ import { Article } from '../model/Models';
 import { MemoryService } from './MemoryService';
 import { InterestCalculator } from '../utils/InterestCalculator';
 import { Constants } from '../constants/Constants';
+import { getLearningService } from './LearningService';
 
 const TAG = 'RecommendService';
 
@@ -193,9 +194,26 @@ export class RecommendService {
   // ==================== 私有方法 ====================
 
   /**
-   * 获取生效权重：若配置异常则回退默认值，保障排序稳定性
+   * 获取生效权重：自适应学习 > 静态配置 > 兜底默认值
    */
   private getEffectiveWeights(): RecommendWeights {
+    // 优先使用自学习引擎的自适应权重
+    const learnSvc = getLearningService();
+    if (learnSvc.isReady()) {
+      const adaptive = learnSvc.getAdaptiveWeights();
+      if (adaptive.confidence >= Constants.LEARNING_MIN_CONFIDENCE) {
+        console.info(TAG,
+          `使用自适应权重 c=${adaptive.content.toFixed(2)} t=${adaptive.topic.toFixed(2)} f=${adaptive.freshness.toFixed(2)} fd=${adaptive.feed.toFixed(2)} conf=${adaptive.confidence.toFixed(2)}`);
+        return {
+          content: adaptive.content,
+          topic: adaptive.topic,
+          freshness: adaptive.freshness,
+          feed: adaptive.feed
+        };
+      }
+    }
+
+    // 降级：静态配置权重
     const configured: RecommendWeights = {
       content: Constants.W_CONTENT,
       topic: Constants.W_TOPIC,

@@ -1,0 +1,29 @@
+{
+  "version": 1,
+  "skills": {
+    "self-improving-agent": {
+      "name": "self-improving-agent",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=self-improving-agent",
+      "source": "skillhub",
+      "version": "1.0.11"
+    },
+    "code-review": {
+      "name": "Code Review",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=code-review",
+      "source": "skillhub",
+      "version": "1.0.0"
+    },
+    "find-skills": {
+      "name": "Find Skills",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=find-skills",
+      "source": "skillhub",
+      "version": "0.1.0"
+    },
+    "engineer": {
+      "name": "Engineer",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=engineer",
+      "source": "skillhub",
+      "version": "1.0.0"
+    }
+  }
+}

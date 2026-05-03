@@ -3,8 +3,8 @@ import { Article, BriefingData, BriefingItem, BriefingLevel, BriefingSkipItem, T
 import { AIService } from './AIService';
 import { SettingsService } from './SettingsService';
 import { DatabaseHelper } from '../database/DatabaseHelper';
-import { Constants } from '../constants/Constants';
 import { DateUtil } from '../utils/DateUtil';
+import { ProfileService } from './ProfileService';
 
 /** AI 返回的 JSON 中单条推荐的原始结构 */
 interface RawRecommended {
@@ -36,6 +36,7 @@ interface RawBriefingJSON {
   recommended: RawRecommended[];
   skippable: RawSkippable[];
   timeline: RawTimeline[];
+  topics: string[];
 }
 
 export class BriefingService {
@@ -54,11 +55,11 @@ export class BriefingService {
   async generate(): Promise<BriefingData> {
     const today = DateUtil.today();
 
-    // 获取未读文章
-    const articles: Article[] = await DatabaseHelper.getInstance().getAllArticles(true, 50, 0);
+    // 获取今日已读文章（简报改为回顾阅读内容）
+    const articles: Article[] = await DatabaseHelper.getInstance().getTodayReadArticles(50);
     if (articles.length === 0) {
       const empty: BriefingData = {
-        summary: '暂无未读文章',
+        summary: '今天还没有阅读文章，去读几篇再来生成回顾吧',
         recommended: [],
         skippable: [],
         timeline: [],
@@ -80,7 +81,7 @@ export class BriefingService {
       }
     }
 
-    // 获取用户偏好的推荐数量
+    // 获取用户偏好的回顾篇数
     const briefingCount = await SettingsService.getInstance().getBriefingCount();
 
     // 检查 AI Key
@@ -96,7 +97,7 @@ export class BriefingService {
       return noKey;
     }
 
-    // 调用 AI 生成
+    // 调用 AI 生成阅读回顾
     const rawJson = await AIService.getInstance().generateBriefing(articles, briefingCount);
 
     // 解析 JSON 并映射 articleId
@@ -104,7 +105,19 @@ export class BriefingService {
     briefing.generatedAt = `${today} ${DateUtil.formatTime(new Date())}`;
     briefing.articleCount = articles.length;
 
+    // 根据 AI 提取的话题关键词更新阅读画像
+    this.updateProfileFromBriefing(rawJson);
+
     return briefing;
+  }
+
+  /**
+   * 简报生成后异步触发画像更新，基于今日阅读内容刷新阅读画像
+   */
+  private updateProfileFromBriefing(_rawJson: string): void {
+    ProfileService.getInstance().regenerate().catch((e: Error) => {
+      console.warn('BriefingService', `简报后画像更新失败: ${e.message}`);
+    });
   }
 
   /**

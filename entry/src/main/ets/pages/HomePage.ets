@@ -6,6 +6,7 @@ import { MemoryService } from '../service/MemoryService';
 import { SettingsService } from '../service/SettingsService';
 import { RecommendService } from '../service/RecommendService';
 import { AIService } from '../service/AIService';
+import { getLearningService } from '../service/LearningService';
 import { Constants } from '../constants/Constants';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
 import { BackupService } from '../service/BackupService';
@@ -451,6 +452,22 @@ export struct HomePage {
                         articleTitle: article.title,
                         feedTitle: article.feedTitle
                       });
+                      // 自学习反馈：记录维度贡献（驱动自适应权重调整）
+                      if (article.recommendScore !== undefined) {
+                        const learnSvc = getLearningService();
+                        if (learnSvc.isReady()) {
+                          learnSvc.recordOutcome(
+                            {
+                              content: 0.45 * (article.recommendReason === Constants.BADGE_CONTENT_MATCH ? 1 : 0.3),
+                              topic: 0.30 * (article.recommendReason === Constants.BADGE_TOPIC_MATCH ? 1 : 0.3),
+                              freshness: 0.20 * (article.recommendReason === Constants.BADGE_LATEST ? 1 : 0.3),
+                              feed: 0.05
+                            },
+                            true, // wasClicked
+                            0     // duration unknown at click time, will be updated by ArticleDetailPage
+                          );
+                        }
+                      }
                     }
                     await this.preMarkArticleAsRead(article);
                     this.getUIContext().getRouter().pushUrl({

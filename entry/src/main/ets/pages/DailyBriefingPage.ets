@@ -54,12 +54,6 @@ struct DailyBriefingPage {
     return Constants.COLOR_RECOMMEND_LOW;
   }
 
-  private getLevelLabel(level: string): string {
-    if (level === 'high') return '强烈推荐';
-    if (level === 'medium') return '值得一看';
-    return '可选阅读';
-  }
-
   build() {
     Column() {
       // 导航栏
@@ -128,15 +122,15 @@ struct DailyBriefingPage {
             // 今日概览卡片
             this.overviewCard()
 
-            // 推荐文章列表
+            // 阅读亮点
             if (this.briefing!.recommended.length > 0) {
-              this.sectionHeader('推荐阅读')
+              this.sectionHeader('阅读亮点')
               this.recommendedList()
             }
 
             // 时间轴
             if (this.briefing!.timeline && this.briefing!.timeline.length > 0) {
-              this.sectionHeader('今日新闻时间轴')
+              this.sectionHeader('阅读时间轴')
               this.timelineSection()
             }
 
@@ -160,15 +154,6 @@ struct DailyBriefingPage {
   }
 
   @Builder
-  sectionHeader(title: string) {
-    Text(title)
-      .fontSize(13)
-      .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-      .width('100%')
-      .padding({ left: 4, bottom: 4 })
-  }
-
-  @Builder
   overviewCard() {
     Column({ space: 8 }) {
       // 摘要
@@ -182,10 +167,10 @@ struct DailyBriefingPage {
         Text(`${this.briefing!.generatedAt}`)
           .fontSize(12)
           .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-        Text(`分析 ${this.briefing!.articleCount} 篇文章`)
+        Text(`回顾 ${this.briefing!.articleCount} 篇已读`)
           .fontSize(12)
           .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-        Text(`推荐 ${this.briefing!.recommended.length} 篇`)
+        Text(`精选 ${this.briefing!.recommended.length} 篇`)
           .fontSize(12)
           .fontColor($r('sys.color.ohos_id_color_activated'))
       }
@@ -195,6 +180,69 @@ struct DailyBriefingPage {
     .backgroundColor($r('sys.color.ohos_id_color_background'))
     .borderRadius(12)
     .padding(16)
+  }
+
+  @Builder
+  sectionHeader(title: string) {
+    Text(title)
+      .fontSize(13)
+      .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+      .width('100%')
+      .padding({ left: 4, bottom: 4 })
+  }
+
+  @Builder
+  skippableSection() {
+    Column({ space: 0 }) {
+      // 折叠标题
+      Row() {
+        Text(`可快速浏览（${this.briefing!.skippable.length}篇）`)
+          .fontSize(13)
+          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+          .layoutWeight(1)
+        SymbolGlyph(this.showSkippable ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
+          .fontSize(14)
+          .fontColor([$r('sys.color.ohos_id_color_text_tertiary')])
+      }
+      .width('100%')
+      .height(40)
+      .padding({ left: 4, right: 4 })
+      .onClick(() => {
+        this.showSkippable = !this.showSkippable;
+      })
+
+      if (this.showSkippable) {
+        Column() {
+          ForEach(this.briefing!.skippable, (item: BriefingSkipItem, index: number) => {
+            Row({ space: 8 }) {
+              Column({ space: 2 }) {
+                Text(item.title)
+                  .fontSize(14)
+                  .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                  .maxLines(1)
+                  .textOverflow({ overflow: TextOverflow.Ellipsis })
+                  .width('100%')
+                Text(item.reason)
+                  .fontSize(12)
+                  .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+                  .width('100%')
+              }
+              .layoutWeight(1)
+            }
+            .width('100%')
+            .padding({ left: 16, right: 16, top: 10, bottom: 10 })
+
+            if (index < this.briefing!.skippable.length - 1) {
+              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
+            }
+          }, (item: BriefingSkipItem, index: number) => `skip_${index}`)
+        }
+        .width('100%')
+        .backgroundColor($r('sys.color.ohos_id_color_background'))
+        .borderRadius(12)
+      }
+    }
+    .width('100%')
   }
 
   @Builder
@@ -316,58 +364,14 @@ struct DailyBriefingPage {
     .padding({ top: 8, bottom: 8 })
   }
 
-  @Builder
-  skippableSection() {
-    Column({ space: 0 }) {
-      // 折叠标题
-      Row() {
-        Text(`可以跳过（${this.briefing!.skippable.length}篇）`)
-          .fontSize(13)
-          .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-          .layoutWeight(1)
-        SymbolGlyph(this.showSkippable ? $r('sys.symbol.chevron_up') : $r('sys.symbol.chevron_down'))
-          .fontSize(14)
-          .fontColor([$r('sys.color.ohos_id_color_text_tertiary')])
-      }
-      .width('100%')
-      .height(40)
-      .padding({ left: 4, right: 4 })
-      .onClick(() => {
-        this.showSkippable = !this.showSkippable;
-      })
-
-      if (this.showSkippable) {
-        Column() {
-          ForEach(this.briefing!.skippable, (item: BriefingSkipItem, index: number) => {
-            Row({ space: 8 }) {
-              Column({ space: 2 }) {
-                Text(item.title)
-                  .fontSize(14)
-                  .fontColor($r('sys.color.ohos_id_color_text_secondary'))
-                  .maxLines(1)
-                  .textOverflow({ overflow: TextOverflow.Ellipsis })
-                  .width('100%')
-                Text(item.reason)
-                  .fontSize(12)
-                  .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-                  .width('100%')
-              }
-              .layoutWeight(1)
-            }
-            .width('100%')
-            .padding({ left: 16, right: 16, top: 10, bottom: 10 })
-
-            if (index < this.briefing!.skippable.length - 1) {
-              Divider().color($r('sys.color.ohos_id_color_list_separator')).margin({ left: 16 })
-            }
-          }, (item: BriefingSkipItem, index: number) => `skip_${index}`)
-        }
-        .width('100%')
-        .backgroundColor($r('sys.color.ohos_id_color_background'))
-        .borderRadius(12)
-      }
+  private getLevelLabel(level: string): string {
+    if (level === 'high') {
+      return '深度阅读';
     }
-    .width('100%')
+    if (level === 'medium') {
+      return '正常阅读';
+    }
+    return '快速浏览';
   }
 
   @Builder

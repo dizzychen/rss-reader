@@ -327,6 +327,22 @@ export class DatabaseHelper {
     return count;
   }
 
+  /** 查询今日已读的文章列表（简报用，按阅读时间倒序） */
+  async getTodayReadArticles(limit: number = 50): Promise<Article[]> {
+    if (!this.rdbStore) {
+      return [];
+    }
+    const todayStart = new Date();
+    todayStart.setHours(0, 0, 0, 0);
+    const predicates = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
+    predicates.equalTo('is_read', 1)
+      .and()
+      .greaterThanOrEqualTo('cached_at', todayStart.getTime())
+      .orderByDesc('cached_at')
+      .limitAs(limit);
+    return await this.queryArticles(predicates);
+  }
+
   private rowToFeed(result: relationalStore.ResultSet): Feed {
     return {
       id: result.getLong(result.getColumnIndex('id')),

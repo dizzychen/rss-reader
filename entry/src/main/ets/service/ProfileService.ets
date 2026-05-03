@@ -9,6 +9,7 @@ import { RecommendService } from './RecommendService';
 import { DateUtil } from '../utils/DateUtil';
 import { MarkdownUtil } from '../utils/MarkdownUtil';
 import { Constants } from '../constants/Constants';
+import { getLearningService } from './LearningService';
 
 /** aggregateStats 返回类型 */
 interface AggregatedStats {
@@ -422,6 +423,21 @@ export class ProfileService {
       // LESSONS 经验沉淀：将推荐命中率追踪写入 LESSONS.md
       await this.updateLessonsTracking(memSvc, today, recHitRate, recentStats);
 
+      // 自学习：话题趋势检测 + 策略效果记录
+      const learnSvc = getLearningService();
+      if (learnSvc.isReady()) {
+        const topicMap = new Map<string, number>();
+        for (const tw of topicWeights) {
+          topicMap.set(tw.key, tw.weight);
+        }
+        learnSvc.detectTopicTrends(topicMap);
+        learnSvc.recordStrategyDay(recHitRate,
+          recentStats.reduce((sum, d) => sum + d.recExposureCount, 0),
+          recentStats.reduce((sum, d) => sum + d.recHitCount, 0));
+        // 异步生成 Hermes 风格的记忆共识
+        this.consolidateMemoryAsync(memSvc);
+      }
+
       const profileContent = this.buildProfileMarkdown({
         generatedAt: today,
         totalReadDays: aggregated.totalReadDays,
@@ -443,6 +459,24 @@ export class ProfileService {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('ProfileService', `regenerate failed: ${msg}`);
     }
+  }
+
+  /**
+   * 异步生成 Hermes 风格记忆共识 (MEMORY.md)
+   * fire-and-forget，不阻塞画像生成主流程
+   */
+  private consolidateMemoryAsync(memSvc: MemoryService): void {
+    const learnSvc = getLearningService();
+    Promise.all([memSvc.getSoul(), memSvc.getProfile()]).then(([soul, profile]) => {
+      learnSvc.generateConsolidatedMemory(soul, profile).then(async (content) => {
+        const path = `${memSvc.getFilesDir()}/${Constants.MEMORY_CONSOLIDATED_FILE}`;
+        await MemoryFileHelper.writeMarkdown(path, content);
+        await learnSvc.persist();
+        console.info('ProfileService', 'MEMORY.md 共识已更新');
+      });
+    }).catch((e: Error) => {
+      console.warn('ProfileService', `consolidateMemoryAsync failed: ${e.message}`);
+    });
   }
 
   /**

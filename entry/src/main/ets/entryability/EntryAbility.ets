@@ -11,6 +11,7 @@ import { AIService } from '../service/AIService';
 import { DateUtil } from '../utils/DateUtil';
 import { WorkSchedulerManager } from '../service/WorkSchedulerManager';
 import { BackupService } from '../service/BackupService';
+import { getLearningService } from '../service/LearningService';
 
 const DOMAIN = 0x0000;
 
@@ -63,6 +64,8 @@ export default class EntryAbility extends UIAbility {
     // 注入 ProfileService.regenerate 回调，避免 MemoryService 与 ProfileService 循环依赖
     setProfileRegenerateCallback(() => ProfileService.getInstance().regenerate());
     setProfileQuickRefreshCallback(() => ProfileService.getInstance().quickRefresh());
+    // 初始化自学习引擎（依赖 MemoryService 已就绪）
+    await getLearningService().init();
     // 加载 AI API Key
     const apiKey = await SettingsService.getInstance().getAIApiKey();
     if (apiKey) {
