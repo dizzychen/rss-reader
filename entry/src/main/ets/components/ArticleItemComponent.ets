@@ -5,7 +5,7 @@ import { Constants } from '../constants/Constants';
 
 @Component
 export struct ArticleItemComponent {
-  @Prop article: Article = {
+  @Prop @Watch('onArticleChange') article: Article = {
     feedId: 0, guid: '', title: '', summary: '', content: '',
     url: '', author: '', publishedAt: 0, isRead: 0, isStarred: 0, coverImage: ''
   };
@@ -13,6 +13,14 @@ export struct ArticleItemComponent {
   @State coverLoadFailed: boolean = false;
   onTap: () => void = () => {};
   onStarToggle: () => void = () => {};
+
+  /**
+   * 当 article 属性变化（ForEach 组件回收复用时）重置封面加载状态，
+   * 避免上一篇文章的加载失败状态导致新文章的有效封面无法显示
+   */
+  onArticleChange(): void {
+    this.coverLoadFailed = false;
+  }
 
   build() {
     Stack({ alignContent: Alignment.TopStart }) {

@@ -751,14 +751,17 @@ ${dislikedList}
 
       if (headerIdx >= 0) {
         // 找到下一个 ## 章节的起始位置
-        const afterHeader = existingProfile.indexOf('\n', headerIdx);
+        let afterHeader = existingProfile.indexOf('\n', headerIdx);
+        if (afterHeader < 0) {
+          afterHeader = existingProfile.length - 1;
+        }
         let nextSectionIdx = existingProfile.indexOf('\n## ', afterHeader);
         if (nextSectionIdx < 0) {
           nextSectionIdx = existingProfile.length;
         }
         const before = existingProfile.substring(0, afterHeader + 1);
         const after = existingProfile.substring(nextSectionIdx);
-        const patchedFeed = `${before}\n${feedSectionNew}\n${after}`;
+        const patchedFeed = `${before}${feedSectionNew}\n${after}`;
         const patched = this.patchCompactFeedSummaryLine(patchedFeed, updatedWeights);
         await memSvc.updateProfile(patched);
         RecommendService.getInstance().clearProfileCache();
@@ -793,9 +796,9 @@ ${dislikedList}
       return profileContent;
     }
 
-    const afterHeader = profileContent.indexOf('\n', compactIdx);
+    let afterHeader = profileContent.indexOf('\n', compactIdx);
     if (afterHeader < 0) {
-      return profileContent;
+      afterHeader = profileContent.length - 1;
     }
 
     let nextSectionIdx = profileContent.indexOf('\n## ', afterHeader);
@@ -889,7 +892,9 @@ ${dislikedList}
 
       let replaced = false;
       for (const rowIndex of dataRowIndexes) {
-        if (lines[rowIndex].includes(`| ${today} |`)) {
+        // 精确匹配日期列（第一列），避免子串匹配误判
+        const rowDate = lines[rowIndex].split('|').map(s => s.trim()).filter(s => s.length > 0)[0];
+        if (rowDate === today) {
           lines[rowIndex] = newRow;
           replaced = true;
           break;
@@ -899,6 +904,10 @@ ${dislikedList}
       if (!replaced) {
         // 新日期插入到表头后（最新在前）
         lines.splice(separatorIndex + 1, 0, newRow);
+        // splice 后 sectionEndIndex 需要同步偏移
+        if (sectionEndIndex > separatorIndex) {
+          sectionEndIndex++;
+        }
       }
 
       // 仅保留推荐效果追踪区间内的行排序（日期倒序）
@@ -922,6 +931,17 @@ ${dislikedList}
         return bDate.localeCompare(aDate);
       });
 
+      // 按日期去重，保留首次出现的行（排序后同日期相邻）
+      const dedupedRows: string[] = [];
+      const seenDates = new Set<string>();
+      for (const row of currentDataRows) {
+        const rowDate = row.split('|').map(s => s.trim()).filter(s => s.length > 0)[0];
+        if (rowDate && !seenDates.has(rowDate)) {
+          seenDates.add(rowDate);
+          dedupedRows.push(row);
+        }
+      }
+
       // 重建 tracking 表数据区，避免重复行
       const rebuilt: string[] = [];
       for (let i = 0; i < lines.length; i++) {
@@ -930,7 +950,7 @@ ${dislikedList}
           continue;
         }
         if (i === separatorIndex + 1) {
-          for (const row of currentDataRows) {
+          for (const row of dedupedRows) {
             rebuilt.push(row);
           }
         }

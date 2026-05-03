@@ -69,16 +69,20 @@ export struct MePage {
   }
 
   async loadSettings() {
-    const s = await SettingsService.getInstance().getSettings();
-    const riIdx = Constants.REFRESH_INTERVALS.indexOf(s.refreshInterval);
-    this.refreshIntervalIndex = riIdx >= 0 ? riIdx : 2;
-    this.bgRefreshEnabled = s.bgRefreshEnabled;
-    this.notificationEnabled = s.notificationEnabled;
-    const fsIdx = Constants.FONT_SIZES.indexOf(s.fontSize);
-    this.fontSizeIndex = fsIdx >= 0 ? fsIdx : 1;
-    this.openOriginalInApp = s.openOriginalInApp;
-    const ccIdx = Constants.CACHE_COUNT_OPTIONS.indexOf(s.cacheCountPerFeed);
-    this.cacheCountIndex = ccIdx >= 0 ? ccIdx : 1;
+    try {
+      const s = await SettingsService.getInstance().getSettings();
+      const riIdx = Constants.REFRESH_INTERVALS.indexOf(s.refreshInterval);
+      this.refreshIntervalIndex = riIdx >= 0 ? riIdx : 2;
+      this.bgRefreshEnabled = s.bgRefreshEnabled;
+      this.notificationEnabled = s.notificationEnabled;
+      const fsIdx = Constants.FONT_SIZES.indexOf(s.fontSize);
+      this.fontSizeIndex = fsIdx >= 0 ? fsIdx : 1;
+      this.openOriginalInApp = s.openOriginalInApp;
+      const ccIdx = Constants.CACHE_COUNT_OPTIONS.indexOf(s.cacheCountPerFeed);
+      this.cacheCountIndex = ccIdx >= 0 ? ccIdx : 1;
+    } catch (e) {
+      console.error('MePage', `loadSettings failed: ${e instanceof Error ? e.message : String(e)}`);
+    }
     this.loaded = true;
   }
 

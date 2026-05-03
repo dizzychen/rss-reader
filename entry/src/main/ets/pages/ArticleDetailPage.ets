@@ -8,8 +8,7 @@ import { MemoryService } from '../service/MemoryService';
 import { AIService } from '../service/AIService';
 import { Constants } from '../constants/Constants';
 import { LvMarkdownIn } from '@luvi/lv-markdown-in';
-import { common } from '@kit.AbilityKit';
-import { Want } from '@kit.AbilityKit';
+import { common, Want } from '@kit.AbilityKit';
 
 // 内容块类型：文本或图片
 interface ContentBlock {
@@ -35,6 +34,7 @@ struct ArticleDetailPage {
   @State openOriginalInApp: boolean = true;
   private articleId: number = -1;
   private readStartTime: number = 0;
+  private isDestroyed: boolean = false;
   private webController: webview.WebviewController = new webview.WebviewController();
 
   aboutToAppear() {
@@ -49,6 +49,8 @@ struct ArticleDetailPage {
   }
 
   aboutToDisappear() {
+    // 标记组件已销毁，阻止 AI 流式回调写入已释放的状态
+    this.isDestroyed = true;
     // 记录 READ_END 行为（退出时）
     if (this.article && this.readStartTime > 0) {
       const duration = Math.floor((Date.now() - this.readStartTime) / 1000);
@@ -79,42 +81,46 @@ struct ArticleDetailPage {
   }
 
   async loadArticle() {
-    const db = DatabaseHelper.getInstance();
-    this.article = await db.getArticleById(this.articleId);
-    if (this.article) {
-      this.isStarred = this.article.isStarred === 1;
-      if (this.article.isRead === 0) {
-        await db.markRead(this.articleId, 1);
-      }
-      // 解析 HTML 为图文混排内容块
-      const raw = this.article.content || this.article.summary || '';
-      this.contentBlocks = this.parseHtmlToBlocks(raw);
-      // 同时保留纯文本用于 AI 分析等场景
-      this.bodyText = this.htmlToReadableText(raw);
-      // 加载来源名称
-      const feed = await db.getFeedById(this.article.feedId);
-      this.feedTitle = feed?.title ?? '';
+    try {
+      const db = DatabaseHelper.getInstance();
+      this.article = await db.getArticleById(this.articleId);
+      if (this.article) {
+        this.isStarred = this.article.isStarred === 1;
+        if (this.article.isRead === 0) {
+          await db.markRead(this.articleId, 1);
+        }
+        // 解析 HTML 为图文混排内容块
+        const raw = this.article.content || this.article.summary || '';
+        this.contentBlocks = this.parseHtmlToBlocks(raw);
+        // 同时保留纯文本用于 AI 分析等场景
+        this.bodyText = this.htmlToReadableText(raw);
+        // 加载来源名称
+        const feed = await db.getFeedById(this.article.feedId);
+        this.feedTitle = feed?.title ?? '';
 
-      // 记录 READ 行为
-      MemoryService.getInstance().recordBehavior({
-        timestamp: Date.now(),
-        action: 'READ',
-        articleId: this.article.id,
-        articleTitle: this.article.title,
-        feedTitle: this.feedTitle
-      });
+        // 记录 READ 行为
+        MemoryService.getInstance().recordBehavior({
+          timestamp: Date.now(),
+          action: 'READ',
+          articleId: this.article.id,
+          articleTitle: this.article.title,
+          feedTitle: this.feedTitle
+        });
 
-      // 有 AI Key 时自动触发 AI 总结（优先使用缓存）
-      if (AIService.getInstance().hasApiKey()) {
-        if (this.article.aiSummary && this.article.aiSummary.length > 0) {
-          // 有缓存，直接展示
-          this.aiAnalysis = this.article.aiSummary;
-          this.showAIPanel = true;
-        } else {
-          // 无缓存，调用 AI 生成
-          this.analyzeWithAI();
+        // 有 AI Key 时自动触发 AI 总结（优先使用缓存）
+        if (AIService.getInstance().hasApiKey()) {
+          if (this.article.aiSummary && this.article.aiSummary.length > 0) {
+            // 有缓存，直接展示
+            this.aiAnalysis = this.article.aiSummary;
+            this.showAIPanel = true;
+          } else {
+            // 无缓存，调用 AI 生成
+            this.analyzeWithAI();
+          }
         }
       }
+    } catch (e) {
+      console.error('ArticleDetailPage', `loadArticle failed: ${e instanceof Error ? e.message : String(e)}`);
     }
   }
 
@@ -197,8 +203,8 @@ struct ArticleDetailPage {
       .replace(/&quot;/g, '"')
       .replace(/&apos;/g, "'")
       .replace(/&nbsp;/g, ' ')
-      .replace(/&#(\d+);/g, (_m: string, code: string) => String.fromCharCode(parseInt(code, 10)))
-      .replace(/&#x([0-9a-fA-F]+);/g, (_m: string, code: string) => String.fromCharCode(parseInt(code, 16)))
+      .replace(/&#(\d+);/g, (_m: string, code: string) => String.fromCodePoint(parseInt(code, 10)))
+      .replace(/&#x([0-9a-fA-F]+);/g, (_m: string, code: string) => String.fromCodePoint(parseInt(code, 16)))
       // 合并超过两个连续换行
       .replace(/\n{3,}/g, '\n\n')
       .trim();
@@ -244,10 +250,18 @@ struct ArticleDetailPage {
     await AIService.getInstance().analyzeArticleStream(
       art,
       (chunk: string) => {
+        // 组件已销毁时忽略回调，避免写入已释放的状态
+        if (this.isDestroyed) {
+          return;
+        }
         // 逐块追加文本，实现打字机效果
         this.aiAnalysis += chunk;
       },
       () => {
+        // 组件已销毁时忽略回调
+        if (this.isDestroyed) {
+          return;
+        }
         // 流式输出完毕，保存到数据库缓存
         this.isAILoading = false;
         if (this.aiAnalysis.length === 0) {
@@ -258,6 +272,10 @@ struct ArticleDetailPage {
         }
       },
       (errMsg: string) => {
+        // 组件已销毁时忽略回调
+        if (this.isDestroyed) {
+          return;
+        }
         // 出错
         this.isAILoading = false;
         this.aiAnalysis = `总结失败：${errMsg}`;

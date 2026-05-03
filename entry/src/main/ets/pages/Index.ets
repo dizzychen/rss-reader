@@ -14,6 +14,8 @@ import { router } from '@kit.ArkUI';
 struct Index {
   @State currentIndex: number = 0;
   @State dbReady: boolean = false;  // 数据库就绪标志
+  @State dbError: boolean = false;
+  @State dbErrorMessage: string = '';
   // 刷新触发器：每次自增时通知子组件重新加载数据
   @State homeRefreshTick: number = 0;
   @State feedsRefreshTick: number = 0;
@@ -62,8 +64,8 @@ struct Index {
       this.autoRefreshOnLaunch();
     }).catch((e: Error) => {
       console.error('Index', `DB init failed: ${e?.message}`);
-      // 即便失败也显示页面，避免白屏
-      this.dbReady = true;
+      this.dbError = true;
+      this.dbErrorMessage = e?.message ?? '未知错误';
     });
   }
 
@@ -119,48 +121,29 @@ struct Index {
     }
   }
 
-  /**
-   * 启动时自动在后台刷新所有订阅源，完成后触发当前 Tab 刷新
-   */
-  private autoRefreshOnLaunch(): void {
-    const ctx = this.getUIContext().getHostContext();
-    if (!ctx) return;
-    FeedRefreshService.getInstance().refreshAll(ctx).then((newCount: number) => {
-      console.info('Index', `启动自动刷新完成，新增 ${newCount} 篇文章`);
-      // 无论是否有新文章，都触发完整重载（已有文章内容可能也已更新）
-      this.homeFullReloadTick++;
-      this.feedsRefreshTick++;
-      
-      if (newCount > 0) {
-        this.getUIContext().getPromptAction().showToast({ message: `已更新 ${newCount} 篇新文章` });
-      } else if (!this.notificationTapHandlerTriggered && !this.isStartedFromNotification) {
-        this.getUIContext().getPromptAction().showToast({ message: '订阅内容已是最新' });
-      }
-    }).catch((e: Error) => {
-      console.error('Index', `启动自动刷新失败: ${e?.message}`);
-      this.getUIContext().getPromptAction().showToast({ message: `刷新失败: ${e?.message ?? '未知错误'}` });
-    });
-  }
-
-  @Builder
-  tabBarBuilder(index: number, iconName: string, selectedIconName: string, label: string) {
-    Column({ space: 4 }) {
-      SymbolGlyph($r(`sys.symbol.${this.currentIndex === index ? selectedIconName : iconName}`))
-        .fontSize(24)
-        .fontColor([this.currentIndex === index ? $r('sys.color.ohos_id_color_activated') : $r('sys.color.ohos_id_color_text_secondary')])
-      Text(label)
-        .fontSize(10)
-        .fontColor(this.currentIndex === index ? $r('sys.color.ohos_id_color_activated') : $r('sys.color.ohos_id_color_text_secondary'))
-    }
-    .width('100%')
-    .height(56)
-    .justifyContent(FlexAlign.Center)
-  }
-
   build() {
     Stack() {
-      // 数据库就绪后显示主界面
-      if (this.dbReady) {
+      // 数据库初始化失败，显示错误界面
+      if (this.dbError) {
+        Column({ space: 16 }) {
+          SymbolGlyph($r('sys.symbol.exclamationmark_triangle'))
+            .fontSize(48)
+            .fontColor([$r('sys.color.ohos_id_color_text_secondary')])
+          Text('数据加载失败').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_primary'))
+          Text(this.dbErrorMessage)
+            .fontSize(12)
+            .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+            .maxLines(3)
+            .textOverflow({ overflow: TextOverflow.Ellipsis })
+          Button('重试')
+            .fontSize(14)
+            .onClick(() => this.retryInit())
+        }
+        .width('100%')
+        .height('100%')
+        .justifyContent(FlexAlign.Center)
+        .backgroundColor(Color.Transparent)
+      } else if (this.dbReady) {
         Tabs({ barPosition: BarPosition.End, index: this.currentIndex }) {
           TabContent() {
             HomePage({ refreshTick: this.homeRefreshTick, fullReloadTick: this.homeFullReloadTick })
@@ -206,5 +189,66 @@ struct Index {
     }
     .width('100%')
     .height('100%')
+  }
+
+  /**
+   * 启动时自动在后台刷新所有订阅源，完成后触发当前 Tab 刷新
+   */
+  private autoRefreshOnLaunch(): void {
+    const ctx = this.getUIContext().getHostContext();
+    if (!ctx) return;
+    FeedRefreshService.getInstance().refreshAll(ctx).then((newCount: number) => {
+      console.info('Index', `启动自动刷新完成，新增 ${newCount} 篇文章`);
+      // 无论是否有新文章，都触发完整重载（已有文章内容可能也已更新）
+      this.homeFullReloadTick++;
+      this.feedsRefreshTick++;
+      
+      if (newCount > 0) {
+        this.getUIContext().getPromptAction().showToast({ message: `已更新 ${newCount} 篇新文章` });
+      } else if (!this.notificationTapHandlerTriggered && !this.isStartedFromNotification) {
+        this.getUIContext().getPromptAction().showToast({ message: '订阅内容已是最新' });
+      }
+    }).catch((e: Error) => {
+      console.error('Index', `启动自动刷新失败: ${e?.message}`);
+      this.getUIContext().getPromptAction().showToast({ message: `刷新失败: ${e?.message ?? '未知错误'}` });
+    });
+  }
+
+  @Builder
+  tabBarBuilder(index: number, iconName: string, selectedIconName: string, label: string) {
+    Column({ space: 4 }) {
+      SymbolGlyph($r(`sys.symbol.${this.currentIndex === index ? selectedIconName : iconName}`))
+        .fontSize(24)
+        .fontColor([this.currentIndex === index ? $r('sys.color.ohos_id_color_activated') : $r('sys.color.ohos_id_color_text_secondary')])
+      Text(label)
+        .fontSize(10)
+        .fontColor(this.currentIndex === index ? $r('sys.color.ohos_id_color_activated') : $r('sys.color.ohos_id_color_text_secondary'))
+    }
+    .width('100%')
+    .height(56)
+    .justifyContent(FlexAlign.Center)
+  }
+
+  private retryInit(): void {
+    this.dbError = false;
+    this.dbErrorMessage = '';
+    const ctx = this.getUIContext().getHostContext() as common.UIAbilityContext;
+    if (!ctx) {
+      this.dbError = true;
+      this.dbErrorMessage = '无法获取应用上下文';
+      return;
+    }
+    Promise.all([
+      DatabaseHelper.getInstance().init(ctx),
+      SettingsService.getInstance().init(ctx)
+    ]).then(() => {
+      this.dbReady = true;
+      this.triggerCurrentTabRefresh();
+      this.autoRefreshOnLaunch();
+    }).catch((e: Error) => {
+      console.error('Index', `DB init retry failed: ${e?.message}`);
+      this.dbError = true;
+      this.dbErrorMessage = e?.message ?? '未知错误';
+    });
   }
 }

@@ -22,7 +22,8 @@ export class SettingsService {
     this.initPromise = preferences.getPreferences(context, Constants.PREF_NAME).then(p => {
       this.prefs = p;
     }).catch((e: Error) => {
-      console.warn('SettingsService', `init skipped: ${e?.message}`);
+      console.warn('SettingsService', `init failed, will retry on next call: ${e?.message}`);
+      this.initPromise = null; // 清空失败缓存，允许下次调用重试
     });
     return this.initPromise;
   }

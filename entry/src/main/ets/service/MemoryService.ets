@@ -83,8 +83,7 @@ export class MemoryService {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('MemoryService', `init failed: ${msg}`);
-      // 标记为已初始化（部分初始化），避免反复重试
-      this.initialized = true;
+      // 不标记为已初始化，允许下次调用 init() 时重试
     }
   }
 
@@ -808,7 +807,9 @@ export class MemoryService {
         await MemoryFileHelper.deleteFile(`${dailyDir}/${file}`);
       }
 
-      // 清除内存缓存
+      // 清除内存缓存（先取消待处理的刷写定时器，避免写入已删除的文件）
+      clearTimeout(this.flushTimer);
+      this.flushTimer = -1;
       this.behaviorQueue = [];
       this.clearAIRankCache();
 

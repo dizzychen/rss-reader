@@ -137,6 +137,13 @@ export class Constants {
   static readonly DIVERSITY_PENALTY_2ND: number = 0.8;     // 连续同源第 2 篇
   static readonly DIVERSITY_PENALTY_3RD: number = 0.6;     // 连续同源第 3 篇及之后
 
+  // 推荐理由角标文本
+  static readonly BADGE_AI_RECOMMEND: string = 'AI 推荐';
+  static readonly BADGE_RECOMMEND: string = '推荐';
+  static readonly BADGE_TOPIC_MATCH: string = '话题匹配';
+  static readonly BADGE_CONTENT_MATCH: string = '内容相关';
+  static readonly BADGE_LATEST: string = '最新发布';
+
   // AI 画像综合
   static readonly AI_PROFILE_MAX_TOKENS: number = 800;
   static readonly AI_PROFILE_SYSTEM_PROMPT: string =

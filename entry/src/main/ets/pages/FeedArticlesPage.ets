@@ -1,6 +1,5 @@
 // 订阅源文章列表页
-import { router } from '@kit.ArkUI';
-import { Article, Feed, copyArticle } from '../model/Models';
+import { Article, copyArticle, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { FeedRefreshService } from '../service/FeedRefreshService';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
@@ -13,6 +12,7 @@ struct FeedArticlesPage {
   @State isRefreshing: boolean = false;
   @State onlyUnread: boolean = true;
   private feedId: number = -1;
+  private syncTimerId: number = -1;
 
   aboutToAppear() {
     const params = this.getUIContext().getRouter().getParams();
@@ -29,100 +29,9 @@ struct FeedArticlesPage {
     }
   }
 
-  /**
-   * 增量同步文章状态，当 onlyUnread=true 时平滑移除已读文章
-   */
-  private async syncArticleStatus() {
-    if (this.articles.length === 0) return;
-    try {
-      const ids = this.articles.filter(a => a.id !== undefined).map(a => a.id!);
-      const statusMap = await DatabaseHelper.getInstance().getArticlesStatus(ids);
-      let changed = false;
-      const newlyReadIds = new Set<number>();
-      const updated: Article[] = this.articles.map(a => {
-        const status = a.id !== undefined ? statusMap.get(a.id) : undefined;
-        if (status) {
-          const newRead = status['isRead'] ?? a.isRead;
-          const newStarred = status['isStarred'] ?? a.isStarred;
-          if (newRead !== a.isRead || newStarred !== a.isStarred) {
-            changed = true;
-            if (newRead === 1 && a.isRead === 0 && a.id !== undefined) {
-              newlyReadIds.add(a.id);
-            }
-            const overrides = new Map<string, number | string | undefined>();
-            overrides.set('isRead', newRead);
-            overrides.set('isStarred', newStarred);
-            return copyArticle(a, overrides);
-          }
-        }
-        return a;
-      });
-      if (changed) {
-        if (this.onlyUnread && newlyReadIds.size > 0) {
-          this.articles = updated;
-          setTimeout(() => {
-            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
-              this.articles = this.articles.filter(a => !newlyReadIds.has(a.id!));
-            });
-          }, 150);
-        } else {
-          this.articles = updated;
-        }
-      }
-    } catch (e) {
-      console.error('FeedArticlesPage', `syncArticleStatus failed: ${e}`);
-    }
-  }
-
-  /**
-   * 进入详情前先落库已读，并同步当前列表，避免仅未读模式下残留
-   */
-  private async preMarkArticleAsRead(article: Article): Promise<void> {
-    if (article.id === undefined || article.isRead === 1) {
-      return;
-    }
-    try {
-      await DatabaseHelper.getInstance().markRead(article.id, 1);
-    } catch (e) {
-      console.error('FeedArticlesPage', `preMarkArticleAsRead DB update failed: ${e}`);
-    }
-
-    const idx = this.articles.findIndex(a => a.id === article.id);
-    if (idx < 0) {
-      return;
-    }
-
-    if (this.onlyUnread) {
-      this.articles = this.articles.filter(a => a.id !== article.id);
-      return;
-    }
-
-    const target = this.articles[idx];
-    const readOverrides = new Map<string, number | string | undefined>();
-    readOverrides.set('isRead', 1);
-    this.articles[idx] = copyArticle(target, readOverrides);
-    this.articles = [...this.articles];
-  }
-
-  async loadData() {
-    const db = DatabaseHelper.getInstance();
-    this.feed = await db.getFeedById(this.feedId);
-    let arts = await db.getArticlesByFeedId(this.feedId, 100);
-    if (this.onlyUnread) arts = arts.filter(a => a.isRead === 0);
-    // 附加来源名称
-    arts.forEach(a => a.feedTitle = this.feed?.title ?? '');
-    this.articles = arts;
-  }
-
-  async doRefresh() {
-    if (!this.feed) return;
-    this.isRefreshing = true;
-    try {
-      await FeedRefreshService.getInstance().refreshSingleFeed(this.feed);
-      await this.loadData();
-    } finally {
-      this.isRefreshing = false;
-    }
+  aboutToDisappear(): void {
+    clearTimeout(this.syncTimerId);
+    this.syncTimerId = -1;
   }
 
   build() {
@@ -221,7 +130,7 @@ struct FeedArticlesPage {
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
                     const idx = this.articles.findIndex(a => a.id === article.id);
                     if (idx >= 0) {
-                      const starOverrides = new Map<string, number | string | undefined>();
+                      const starOverrides = new Map<string, number | string>();
                       starOverrides.set('isStarred', newStar);
                       this.articles[idx] = copyArticle(article, starOverrides);
                       this.articles = [...this.articles];
@@ -240,5 +149,101 @@ struct FeedArticlesPage {
     .width('100%')
     .height('100%')
     .backgroundColor($r('sys.color.ohos_id_color_sub_background'))
+  }
+
+  /**
+   * 增量同步文章状态，当 onlyUnread=true 时平滑移除已读文章
+   */
+  private async syncArticleStatus() {
+    if (this.articles.length === 0) return;
+    try {
+      const ids = this.articles.filter(a => a.id !== undefined).map(a => a.id!);
+      const statusMap = await DatabaseHelper.getInstance().getArticlesStatus(ids);
+      let changed = false;
+      const newlyReadIds = new Set<number>();
+      const updated: Article[] = this.articles.map(a => {
+        const status = a.id !== undefined ? statusMap.get(a.id) : undefined;
+        if (status) {
+          const newRead = status['isRead'] ?? a.isRead;
+          const newStarred = status['isStarred'] ?? a.isStarred;
+          if (newRead !== a.isRead || newStarred !== a.isStarred) {
+            changed = true;
+            if (newRead === 1 && a.isRead === 0 && a.id !== undefined) {
+              newlyReadIds.add(a.id);
+            }
+            const overrides = new Map<string, number | string>();
+            overrides.set('isRead', newRead);
+            overrides.set('isStarred', newStarred);
+            return copyArticle(a, overrides);
+          }
+        }
+        return a;
+      });
+      if (changed) {
+        if (this.onlyUnread && newlyReadIds.size > 0) {
+          this.articles = updated;
+          this.syncTimerId = setTimeout(() => {
+            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+              this.articles = this.articles.filter(a => !newlyReadIds.has(a.id!));
+            });
+          }, 150);
+        } else {
+          this.articles = updated;
+        }
+      }
+    } catch (e) {
+      console.error('FeedArticlesPage', `syncArticleStatus failed: ${e}`);
+    }
+  }
+
+  async loadData() {
+    const db = DatabaseHelper.getInstance();
+    this.feed = await db.getFeedById(this.feedId);
+    let arts = await db.getArticlesByFeedId(this.feedId, 100);
+    if (this.onlyUnread) arts = arts.filter(a => a.isRead === 0);
+    // 附加来源名称
+    arts.forEach(a => a.feedTitle = this.feed?.title ?? '');
+    this.articles = arts;
+  }
+
+  async doRefresh() {
+    if (!this.feed) return;
+    this.isRefreshing = true;
+    try {
+      await FeedRefreshService.getInstance().refreshSingleFeed(this.feed);
+      await this.loadData();
+    } finally {
+      this.isRefreshing = false;
+    }
+  }
+
+  /**
+   * 进入详情前先落库已读，并同步当前列表，避免仅未读模式下残留
+   */
+  private async preMarkArticleAsRead(article: Article): Promise<void> {
+    if (article.id === undefined || article.isRead === 1) {
+      return;
+    }
+    try {
+      await DatabaseHelper.getInstance().markRead(article.id, 1);
+    } catch (e) {
+      console.error('FeedArticlesPage', `preMarkArticleAsRead DB update failed: ${e}`);
+    }
+
+    const idx = this.articles.findIndex(a => a.id === article.id);
+    if (idx < 0) {
+      return;
+    }
+
+    if (this.onlyUnread) {
+      this.articles = this.articles.filter(a => a.id !== article.id);
+      return;
+    }
+
+    const target = this.articles[idx];
+    const readOverrides = new Map<string, number | string>();
+    readOverrides.set('isRead', 1);
+    this.articles[idx] = copyArticle(target, readOverrides);
+    this.articles = [...this.articles];
   }
 }

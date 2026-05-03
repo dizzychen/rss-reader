@@ -261,7 +261,12 @@ export class BackupService {
       try {
         await fileIo.mkdir(backupDir);
       } catch (e) {
-        // 目录可能已存在，忽略错误
+        // 仅当目录已存在时忽略错误，其他错误（权限、磁盘满等）抛出
+        const msg = e instanceof Error ? e.message : String(e);
+        if (!msg.includes('exist') && !msg.includes('already')) {
+          console.error('BackupService', `mkdir failed: ${msg}`);
+          throw new Error(`无法创建备份目录：${msg}`);
+        }
       }
 
       // 写入备份文件

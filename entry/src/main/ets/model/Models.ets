@@ -38,8 +38,8 @@ export interface Article {
   aiSummary?: string;        // AI 总结缓存
 }
 
-/** Article 浅拷贝工具函数，支持覆盖指定字段 */
-export function copyArticle(src: Article, overrides: Map<string, number | string | undefined> = new Map()): Article {
+/** Article 浅拷贝工具函数，支持覆盖指定字段（ArkTS 静态类型限制，须显式逐字段覆盖） */
+export function copyArticle(src: Article, overrides: Map<string, number | string> = new Map()): Article {
   const copy: Article = {
     id: src.id, feedId: src.feedId, feedTitle: src.feedTitle,
     guid: src.guid, title: src.title, summary: src.summary,
@@ -49,6 +49,7 @@ export function copyArticle(src: Article, overrides: Map<string, number | string
     recommendScore: src.recommendScore, recommendReason: src.recommendReason,
     aiSummary: src.aiSummary
   };
+  // ArkTS 禁止动态属性访问，须逐一检查覆盖字段
   if (overrides.has('isRead')) copy.isRead = overrides.get('isRead') as number;
   if (overrides.has('isStarred')) copy.isStarred = overrides.get('isStarred') as number;
   if (overrides.has('feedTitle')) copy.feedTitle = overrides.get('feedTitle') as string;

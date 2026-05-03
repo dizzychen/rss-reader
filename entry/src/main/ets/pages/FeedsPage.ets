@@ -37,11 +37,14 @@ export struct FeedsPage {
     const groupIds = new Set(groups.map(g => g.id!));
     const hasOrphanFeeds = this.feeds.some(f => !groupIds.has(f.groupId));
     if (hasOrphanFeeds) {
-      // 将孤立 feed 的 groupId 修正为第一个分组 id
+      // 将孤立 feed 的 groupId 修正为第一个分组 id，并持久化到数据库
       const firstGroupId = groups.length > 0 ? groups[0].id! : 1;
       for (const feed of this.feeds) {
         if (!groupIds.has(feed.groupId)) {
           feed.groupId = firstGroupId;
+          db.updateFeed(feed).catch((e: Error) => {
+            console.error('FeedsPage', `failed to persist orphan feed fix: ${feed.title}: ${e.message}`);
+          });
         }
       }
     }

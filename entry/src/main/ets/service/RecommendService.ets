@@ -100,27 +100,29 @@ export class RecommendService {
       const freshContrib = weights.freshness * freshnessScore;
 
       if (topicContrib >= contentContrib && topicContrib >= freshContrib && topicScore > 0.1) {
-        article.recommendReason = '话题匹配';
+        article.recommendReason = Constants.BADGE_TOPIC_MATCH;
       } else if (contentContrib >= topicContrib && contentContrib >= freshContrib && contentScore > 0.1) {
-        article.recommendReason = '内容相关';
+        article.recommendReason = Constants.BADGE_CONTENT_MATCH;
       } else {
-        article.recommendReason = '最新发布';
+        article.recommendReason = Constants.BADGE_LATEST;
       }
     }
 
     // 按推荐分数降序排序
     articles.sort((a, b) => (b.recommendScore ?? 0) - (a.recommendScore ?? 0));
 
-    // 来源多样性惩罚
+    // 来源多样性惩罚（两轮：惩罚→重排→再惩罚，处理重排后新出现的连续同源）
+    this.applyDiversityPenalty(articles, feedMap);
+    articles.sort((a, b) => (b.recommendScore ?? 0) - (a.recommendScore ?? 0));
     this.applyDiversityPenalty(articles, feedMap);
 
-    // 惩罚后重排
+    // 最终重排
     articles.sort((a, b) => (b.recommendScore ?? 0) - (a.recommendScore ?? 0));
 
     // 确保所有文章都有推荐理由（兜底）
     for (const article of articles) {
       if (!article.recommendReason) {
-        article.recommendReason = '推荐';
+        article.recommendReason = Constants.BADGE_RECOMMEND;
       }
     }
 
@@ -171,6 +173,14 @@ export class RecommendService {
    */
   clearScoredCache(): void {
     this.scoredCache = [];
+  }
+
+  /**
+   * 外部注入评分缓存（AI 排序路径分页用）
+   * AI 排序后调用，后续分页从缓存切片，避免重新评分导致角标跳变
+   */
+  setScoredCache(articles: Article[]): void {
+    this.scoredCache = articles;
   }
 
   /**
@@ -305,7 +315,7 @@ export class RecommendService {
     articles.sort((a, b) => b.publishedAt - a.publishedAt);
     for (const a of articles) {
       a.recommendScore = 0;
-      a.recommendReason = '最新发布';
+      a.recommendReason = Constants.BADGE_LATEST;
     }
     // 应用多样性惩罚（虽然分数为 0，但能打散同源文章的连续排列）
     this.applyDiversityPenalty(articles, feedMap);
@@ -331,7 +341,7 @@ export class RecommendService {
       return 0.1;
     }
     const daysOld = (Date.now() - publishedAt) / (24 * 60 * 60 * 1000);
-    return Math.max(0.1, 1.0 - daysOld * 0.1);
+    return Math.min(1.0, Math.max(0.1, 1.0 - daysOld * 0.1));
   }
 
   /**

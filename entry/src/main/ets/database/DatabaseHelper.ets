@@ -247,8 +247,8 @@ export class DatabaseHelper {
 
   async deleteFeed(id: number): Promise<void> {
     if (!this.rdbStore) return;
-    // 删除文章及关联标签
-    const articles = await this.getArticlesByFeedId(id);
+    // 删除文章及关联标签（不限数量，确保所有文章标签都被清理）
+    const articles = await this.getArticlesByFeedId(id, 999999);
     for (const a of articles) {
       if (a.id) await this.deleteArticleTags(a.id);
     }
@@ -303,7 +303,7 @@ export class DatabaseHelper {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const sql = `SELECT COUNT(*) AS cnt FROM ${Constants.TABLE_ARTICLES} WHERE is_read = 1 AND cached_at >= ?`;
-    const result = await this.rdbStore.querySql(sql, [todayStart.getTime().toString()]);
+    const result = await this.rdbStore.querySql(sql, [todayStart.getTime()]);
     let count = 0;
     if (result.goToNextRow()) {
       count = result.getLong(result.getColumnIndex('cnt'));
@@ -318,7 +318,7 @@ export class DatabaseHelper {
     const todayStart = new Date();
     todayStart.setHours(0, 0, 0, 0);
     const sql = `SELECT COUNT(*) AS cnt FROM ${Constants.TABLE_ARTICLES} WHERE is_starred = 1 AND cached_at >= ?`;
-    const result = await this.rdbStore.querySql(sql, [todayStart.getTime().toString()]);
+    const result = await this.rdbStore.querySql(sql, [todayStart.getTime()]);
     let count = 0;
     if (result.goToNextRow()) {
       count = result.getLong(result.getColumnIndex('cnt'));
@@ -384,6 +384,7 @@ export class DatabaseHelper {
         is_read: article.isRead,
         is_starred: article.isStarred,
         cover_image: article.coverImage || '',
+        ai_summary: article.aiSummary || '',
         cached_at: Date.now()
       };
       const rowId = await this.rdbStore.insert(Constants.TABLE_ARTICLES, values);
@@ -398,8 +399,8 @@ export class DatabaseHelper {
         author: article.author,
         published_at: article.publishedAt,
         is_read: existingIsRead,       // 保留已读状态
-        is_starred: existingIsStarred, // 保留收藏状态
-        cached_at: Date.now()          // 更新缓存时间
+        is_starred: existingIsStarred // 保留收藏状态
+        // 不更新 cached_at，避免污染今日已读/收藏统计
       };
       // 仅在有新封面图且旧封面为空时更新
       if (article.coverImage && !existingCoverImage) {
@@ -526,7 +527,7 @@ export class DatabaseHelper {
     if (!this.rdbStore) return;
     const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
     pred.equalTo('id', articleId);
-    await this.rdbStore.update({ is_read: isRead }, pred);
+    await this.rdbStore.update({ is_read: isRead, cached_at: Date.now() }, pred);
   }
 
   /**
@@ -556,7 +557,7 @@ export class DatabaseHelper {
     if (!this.rdbStore) return;
     const pred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
     pred.equalTo('id', articleId);
-    await this.rdbStore.update({ is_starred: isStarred }, pred);
+    await this.rdbStore.update({ is_starred: isStarred, cached_at: Date.now() }, pred);
   }
 
   /**
@@ -618,7 +619,7 @@ export class DatabaseHelper {
     // 兜底策略：当非收藏文章总量过大时，删除最旧的非收藏文章，防止 DB 撑爆
     // 阈值至少 500，并随 keepCount 动态增长，避免在较大缓存配置下误删
     const totalPred = new relationalStore.RdbPredicates(Constants.TABLE_ARTICLES);
-    totalPred.equalTo('feed_id', feedId).equalTo('is_starred', 0).orderByDesc('published_at');
+    totalPred.equalTo('feed_id', feedId).equalTo('is_starred', 0).equalTo('is_read', 1).orderByDesc('published_at');
     const totalResult = await this.rdbStore.query(totalPred, ['id']);
     const totalIds: number[] = [];
     while (totalResult.goToNextRow()) {

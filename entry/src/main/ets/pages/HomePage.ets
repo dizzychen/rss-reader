@@ -52,24 +52,28 @@ export struct HomePage {
     }
   }
 
+  private restoreListener: (() => void) | null = null;
+
   aboutToAppear() {
     this.loadAISettings();
     this.initLoad();
-    // 监听恢复提示事件
+    // 监听恢复提示事件（保存回调引用，确保 off 时只移除自身监听器）
     const hostContext = this.getUIContext()?.getHostContext();
     if (hostContext) {
-      hostContext.eventHub.on('need_restore', () => {
+      this.restoreListener = () => {
         this.showRestoreDialog();
-      });
+      };
+      hostContext.eventHub.on('need_restore', this.restoreListener);
     }
   }
 
   aboutToDisappear() {
     super.aboutToDisappear?.();
-    // 移除事件监听
+    // 移除事件监听（仅移除自己的监听器）
     const hostContext = this.getUIContext()?.getHostContext();
-    if (hostContext) {
-      hostContext.eventHub.off('need_restore');
+    if (hostContext && this.restoreListener) {
+      hostContext.eventHub.off('need_restore', this.restoreListener);
+      this.restoreListener = null;
     }
     // 清理定时器
     if (this.syncTimerId !== -1) {
@@ -169,101 +173,6 @@ export struct HomePage {
     this.loadArticles(true);
   }
 
-  /**
-   * 增量同步：更新当前列表中文章的已读/收藏状态
-   * 当 onlyUnread=true 时，已读文章通过动画平滑移除，避免界面抖动
-   */
-  private async syncArticleStatus() {
-    const articles = this.getCurrentArticles();
-    if (articles.length === 0) return;
-    try {
-      const ids = articles.filter(a => a.id !== undefined).map(a => a.id!);
-      const statusMap = await DatabaseHelper.getInstance().getArticlesStatus(ids);
-      let changed = false;
-      // 收集新变为已读的文章 ID
-      const newlyReadIds = new Set<number>();
-      const updated: Article[] = articles.map(a => {
-        const status = a.id !== undefined ? statusMap.get(a.id) : undefined;
-        if (status) {
-          const newRead = status['isRead'] ?? a.isRead;
-          const newStarred = status['isStarred'] ?? a.isStarred;
-          if (newRead !== a.isRead || newStarred !== a.isStarred) {
-            changed = true;
-            if (newRead === 1 && a.isRead === 0 && a.id !== undefined) {
-              newlyReadIds.add(a.id);
-            }
-            const copy: Article = {
-              id: a.id, feedId: a.feedId, feedTitle: a.feedTitle,
-              guid: a.guid, title: a.title, summary: a.summary,
-              content: a.content, url: a.url, author: a.author,
-              publishedAt: a.publishedAt, isRead: newRead,
-              isStarred: newStarred, coverImage: a.coverImage, cachedAt: a.cachedAt,
-              recommendScore: a.recommendScore, recommendReason: a.recommendReason
-            };
-            return copy;
-          }
-        }
-        return a;
-      });
-      if (changed) {
-        if (this.onlyUnread && newlyReadIds.size > 0) {
-          // 先更新状态（让文章样式变灰），再用动画移除
-          this.setCurrentArticles(updated);
-          // 短暂延迟后平滑移除已读文章
-          this.syncTimerId = setTimeout(() => {
-            this.syncTimerId = -1;
-            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
-              const current = this.getCurrentArticles();
-              this.setCurrentArticles(current.filter(a => !newlyReadIds.has(a.id!)));
-            });
-          }, 150);
-        } else {
-          this.setCurrentArticles(updated);
-        }
-      }
-    } catch (e) {
-      console.error('HomePage', `syncArticleStatus failed: ${e}`);
-    }
-  }
-
-  /**
-   * 进入详情前先落库已读，并同步当前列表，避免已读文章仍停留在仅未读列表
-   */
-  private async preMarkArticleAsRead(article: Article): Promise<void> {
-    if (article.id === undefined || article.isRead === 1) {
-      return;
-    }
-    try {
-      await DatabaseHelper.getInstance().markRead(article.id, 1);
-    } catch (e) {
-      console.error('HomePage', `preMarkArticleAsRead DB update failed: ${e}`);
-    }
-
-    const current = this.getCurrentArticles();
-    const idx = current.findIndex(a => a.id === article.id);
-    if (idx < 0) {
-      return;
-    }
-
-    if (this.onlyUnread) {
-      this.setCurrentArticles(current.filter(a => a.id !== article.id));
-      return;
-    }
-
-    const target = current[idx];
-    const updated: Article = {
-      id: target.id, feedId: target.feedId, feedTitle: target.feedTitle,
-      guid: target.guid, title: target.title, summary: target.summary,
-      content: target.content, url: target.url, author: target.author,
-      publishedAt: target.publishedAt, isRead: 1,
-      isStarred: target.isStarred, coverImage: target.coverImage, cachedAt: target.cachedAt,
-      recommendScore: target.recommendScore, recommendReason: target.recommendReason
-    };
-    const copy = [...current];
-    copy[idx] = updated;
-    this.setCurrentArticles(copy);
-  }
-
   async loadArticles(reset: boolean = true) {
     // 防止多个 loadArticles(true) 并发执行（如下拉刷新和自动刷新同时触发）
     if (reset && this.isFullReloading) {
@@ -284,19 +193,18 @@ export struct HomePage {
         this.isLoading = true;
       }
       RecommendService.getInstance().clearScoredCache();
+      // 同步清理画像缓存，确保切换模式/刷新后使用最新画像重新评分
+      // 不清理 AI 排序缓存：缓存有 1 小时 TTL 自然过期，
+      // 提前清除会导致 AI API 调用失败时降级到本地评分，造成角标跳变
+      RecommendService.getInstance().clearProfileCache();
     } else {
       if (!this.hasMore || this.isLoadingMore) return;
       this.isLoadingMore = true;
     }
     try {
-      const db = DatabaseHelper.getInstance();
       // reset 时重建 feedMap
       if (reset) {
-        const feeds: Feed[] = await db.getAllFeeds();
-        this.feedMap.clear();
-        for (const f of feeds) {
-          this.feedMap.set(f.id!, f.title);
-        }
+        await this.buildFeedMap();
       }
 
       let items: Article[];
@@ -363,6 +271,130 @@ export struct HomePage {
     }
   }
 
+  async doRefresh() {
+    this.isRefreshing = true;
+    try {
+      const newCount = await FeedRefreshService.getInstance().refreshAll(this.getUIContext().getHostContext()!);
+      // 手动刷新后清除画像缓存，确保使用最新画像重新评分
+      RecommendService.getInstance().clearProfileCache();
+      // 不主动清除 AI 排序缓存：缓存有 1 小时 TTL 自然过期，
+      // 提前清除会导致 AI API 调用失败时降级到本地评分，造成角标跳变
+      await this.loadArticles(true);
+      const msg = newCount > 0 ? `已更新 ${newCount} 篇新文章` : '暂无新内容';
+      this.getUIContext().getPromptAction().showToast({ message: msg });
+    } catch (e) {
+      console.error('HomePage', `刷新失败: ${e}`);
+    } finally {
+      this.isRefreshing = false;
+    }
+  }
+
+  @Builder
+  latestListBuilder() {
+    Column() {
+      Refresh({ refreshing: $$this.isRefreshing }) {
+        if (this.isLoading && this.latestArticles.length === 0) {
+          Column() {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .backgroundColor(Color.Transparent)
+            Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else if (this.latestArticles.length === 0) {
+          List() {
+            ListItem() {
+              Column({ space: 16 }) {
+                Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .edgeEffect(EdgeEffect.Spring)
+        } else {
+          List() {
+            ForEach(this.latestArticles, (article: Article) => {
+              ListItem() {
+                ArticleItemComponent({
+                  article: article,
+                  recommendReason: '',
+                  onTap: async () => {
+                    if (article.id !== undefined) {
+                      this.exposedArticleIds.delete(article.id);
+                    }
+                    await this.preMarkArticleAsRead(article);
+                    this.getUIContext().getRouter().pushUrl({
+                      url: 'pages/ArticleDetailPage',
+                      params: { articleId: article.id }
+                    });
+                  },
+                  onStarToggle: async () => {
+                    const newStar = article.isStarred === 1 ? 0 : 1;
+                    await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
+                    const idx = this.latestArticles.findIndex(a => a.id === article.id);
+                    if (idx >= 0) {
+                      const starOverrides = new Map<string, number | string>();
+                      starOverrides.set('isStarred', newStar);
+                      this.latestArticles[idx] = copyArticle(article, starOverrides);
+                      this.latestArticles = [...this.latestArticles];
+                    }
+                  }
+                })
+              }
+              .swipeAction({
+                end: {
+                  builder: () => {
+                    this.swipeDislikeBuilder(article)
+                  }
+                }
+              })
+            }, (article: Article) => `${this.listVersion}-${article.id}-${article.isStarred}-${article.isRead}`)
+
+            ListItem() {
+              Row() {
+                if (this.isLoadingMore) {
+                  LoadingProgress()
+                    .width(24)
+                    .height(24)
+                    .backgroundColor(Color.Transparent)
+                } else if (this.hasMore) {
+                  Button('加载更多')
+                    .fontSize(14)
+                    .fontColor($r('sys.color.ohos_id_color_activated'))
+                    .backgroundColor(Color.Transparent)
+                    .onClick(() => this.loadArticles(false))
+                } else {
+                  Text('已加载全部文章')
+                    .fontSize(13)
+                    .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+                }
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding(16)
+            }
+          }
+          .width('100%')
+          .height('100%')
+          .divider({ strokeWidth: 0.5, color: $r('sys.color.ohos_id_color_list_separator') })
+          .edgeEffect(EdgeEffect.Spring)
+        }
+      }
+      .onRefreshing(() => this.doRefresh())
+      .layoutWeight(1)
+    }
+    .width('100%')
+    .height('100%')
+  }
+
   /**
    * 最新模式：时间倒序分页
    */
@@ -371,85 +403,212 @@ export struct HomePage {
     return await db.getAllArticles(this.onlyUnread, this.pageSize, this.pageOffset);
   }
 
-  /**
-   * 推荐模式：优先使用 AI 排序，无 AI Key 时降级为本地评分
-   */
-  private async loadRecommendArticles(reset: boolean): Promise<Article[]> {
-    const db = DatabaseHelper.getInstance();
-    const recommendSvc = RecommendService.getInstance();
-    const memSvc = MemoryService.getInstance();
-    const aiSvc = AIService.getInstance();
-
-    // 获取待推荐的文章列表（跟随仅未读开关）
-    const allArticles = await db.getRecentArticles(
-      Constants.RECOMMEND_RECENT_DAYS, Constants.RECOMMEND_MAX_ARTICLES, this.onlyUnread);
-    for (const a of allArticles) {
-      a.feedTitle = this.feedMap.get(a.feedId) ?? '';
-    }
-
-    // 如果有 AI Key，尝试使用 AI 排序
-    if (aiSvc.hasApiKey() && reset && allArticles.length > 0) {
-      try {
-        // 调用 AI 排序（内部会先检查缓存，若无缓存则请求 AI）
-        const rankedIds = await aiSvc.rankArticles(allArticles);
-
-        if (rankedIds.length > 0) {
-          // AI 排序成功，按返回的 ID 顺序排列
-          const articleMap = new Map<number, Article>();
-          for (const a of allArticles) {
-            if (a.id !== undefined) {
-              articleMap.set(a.id, a);
+  @Builder
+  recommendListBuilder() {
+    Column() {
+      Refresh({ refreshing: $$this.isRefreshing }) {
+        if (this.isLoading && this.recommendArticles.length === 0) {
+          Column() {
+            LoadingProgress()
+              .width(40)
+              .height(40)
+              .backgroundColor(Color.Transparent)
+            Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
+          }
+          .width('100%')
+          .height('100%')
+          .justifyContent(FlexAlign.Center)
+        } else if (this.recommendArticles.length === 0) {
+          List() {
+            ListItem() {
+              Column({ space: 16 }) {
+                Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
+                Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+              }
+              .width('100%')
+              .height('100%')
+              .justifyContent(FlexAlign.Center)
             }
           }
-          const sorted: Article[] = [];
-          for (const id of rankedIds) {
-            const a = articleMap.get(id);
-            if (a) {
-              a.recommendReason = 'AI 推荐';
-              sorted.push(a);
-              articleMap.delete(id);
+          .width('100%')
+          .height('100%')
+          .edgeEffect(EdgeEffect.Spring)
+        } else {
+          List() {
+            ForEach(this.recommendArticles, (article: Article) => {
+              ListItem() {
+                ArticleItemComponent({
+                  article: article,
+                  recommendReason: article.recommendReason ?? '',
+                  onTap: async () => {
+                    if (article.id !== undefined) {
+                      this.exposedArticleIds.delete(article.id);
+                      // 记录推荐命中
+                      MemoryService.getInstance().recordBehavior({
+                        timestamp: Date.now(),
+                        action: 'AI_REC_HIT',
+                        articleId: article.id,
+                        articleTitle: article.title,
+                        feedTitle: article.feedTitle
+                      });
+                    }
+                    await this.preMarkArticleAsRead(article);
+                    this.getUIContext().getRouter().pushUrl({
+                      url: 'pages/ArticleDetailPage',
+                      params: { articleId: article.id }
+                    });
+                  },
+                  onStarToggle: async () => {
+                    const newStar = article.isStarred === 1 ? 0 : 1;
+                    await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
+                    const idx = this.recommendArticles.findIndex(a => a.id === article.id);
+                    if (idx >= 0) {
+                      const starOverrides = new Map<string, number | string>();
+                      starOverrides.set('isStarred', newStar);
+                      this.recommendArticles[idx] = copyArticle(article, starOverrides);
+                      this.recommendArticles = [...this.recommendArticles];
+                    }
+                  }
+                })
+              }
+              .swipeAction({
+                end: {
+                  builder: () => {
+                    this.swipeDislikeBuilder(article)
+                  }
+                }
+              })
+            }, (article: Article) => `${this.listVersion}-${article.id}-${article.isStarred}-${article.isRead}`)
+
+            ListItem() {
+              Row() {
+                if (this.isLoadingMore) {
+                  LoadingProgress()
+                    .width(24)
+                    .height(24)
+                    .backgroundColor(Color.Transparent)
+                } else if (this.hasMore) {
+                  Button('加载更多')
+                    .fontSize(14)
+                    .fontColor($r('sys.color.ohos_id_color_activated'))
+                    .backgroundColor(Color.Transparent)
+                    .onClick(() => this.loadArticles(false))
+                } else {
+                  Text('已加载全部文章')
+                    .fontSize(13)
+                    .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
+                }
+              }
+              .width('100%')
+              .justifyContent(FlexAlign.Center)
+              .padding(16)
             }
           }
-          // 未在 AI 结果中的文章追加到末尾
-          articleMap.forEach((a) => sorted.push(a));
-          this.hasMore = sorted.length > this.pageSize;
-          return sorted.slice(0, this.pageSize);
+          .width('100%')
+          .height('100%')
+          .divider({ strokeWidth: 0.5, color: $r('sys.color.ohos_id_color_list_separator') })
+          .edgeEffect(EdgeEffect.Spring)
         }
-      } catch (e) {
-        console.warn('HomePage', `AI 排序失败，降级到本地评分: ${e}`);
-        // AI 排序失败，继续使用本地评分
       }
+      .onRefreshing(() => this.doRefresh())
+      .layoutWeight(1)
     }
+    .width('100%')
+    .height('100%')
+  }
 
-    // 无 AI Key 或 AI 排序失败：使用本地评分
-    const page = reset ? 0 : this.recommendPage;
-    if (reset) {
-      const result = await recommendSvc.scoreAndSort(allArticles, this.feedMap, page, this.pageSize);
-      this.recommendPage = 1;
-      this.hasMore = result.totalCount > this.pageSize;
-      return result.articles;
-    } else {
-      // 分页取（从缓存评分结果切片）
-      const result = await recommendSvc.scoreAndSort([], this.feedMap, this.recommendPage, this.pageSize);
-      this.recommendPage++;
-      this.hasMore = result.articles.length >= this.pageSize;
-      return result.articles;
+  /**
+   * 增量同步：更新当前列表中文章的已读/收藏状态
+   * 当 onlyUnread=true 时，已读文章通过动画平滑移除，避免界面抖动
+   */
+  private async syncArticleStatus() {
+    const articles = this.getCurrentArticles();
+    if (articles.length === 0) return;
+    try {
+      const ids = articles.filter(a => a.id !== undefined).map(a => a.id!);
+      const statusMap = await DatabaseHelper.getInstance().getArticlesStatus(ids);
+      let changed = false;
+      // 收集新变为已读的文章 ID
+      const newlyReadIds = new Set<number>();
+      const updated: Article[] = articles.map(a => {
+        const status = a.id !== undefined ? statusMap.get(a.id) : undefined;
+        if (status) {
+          const newRead = status['isRead'] ?? a.isRead;
+          const newStarred = status['isStarred'] ?? a.isStarred;
+          if (newRead !== a.isRead || newStarred !== a.isStarred) {
+            changed = true;
+            if (newRead === 1 && a.isRead === 0 && a.id !== undefined) {
+              newlyReadIds.add(a.id);
+            }
+            const overrides = new Map<string, number | string>();
+            overrides.set('isRead', newRead);
+            overrides.set('isStarred', newStarred);
+            return copyArticle(a, overrides);
+          }
+        }
+        return a;
+      });
+      if (changed) {
+        if (this.onlyUnread && newlyReadIds.size > 0) {
+          // 先更新状态（让文章样式变灰），再用动画移除
+          this.setCurrentArticles(updated);
+          // 短暂延迟后平滑移除已读文章
+          this.syncTimerId = setTimeout(() => {
+            this.syncTimerId = -1;
+            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
+              const current = this.getCurrentArticles();
+              this.setCurrentArticles(current.filter(a => !newlyReadIds.has(a.id!)));
+            });
+          }, 150);
+        } else {
+          this.setCurrentArticles(updated);
+        }
+      }
+    } catch (e) {
+      console.error('HomePage', `syncArticleStatus failed: ${e}`);
     }
   }
 
-  async doRefresh() {
-    this.isRefreshing = true;
+  /**
+   * 进入详情前先落库已读，并同步当前列表，避免已读文章仍停留在仅未读列表
+   */
+  private async preMarkArticleAsRead(article: Article): Promise<void> {
+    if (article.id === undefined || article.isRead === 1) {
+      return;
+    }
     try {
-      const newCount = await FeedRefreshService.getInstance().refreshAll(this.getUIContext().getHostContext()!);
-      // 手动刷新后清除画像缓存，确保推荐评分使用最新画像（角标及时生成）
-      RecommendService.getInstance().clearProfileCache();
-      await this.loadArticles(true);
-      const msg = newCount > 0 ? `已更新 ${newCount} 篇新文章` : '暂无新内容';
-      this.getUIContext().getPromptAction().showToast({ message: msg });
+      await DatabaseHelper.getInstance().markRead(article.id, 1);
     } catch (e) {
-      console.error('HomePage', `刷新失败: ${e}`);
-    } finally {
-      this.isRefreshing = false;
+      console.error('HomePage', `preMarkArticleAsRead DB update failed: ${e}`);
+    }
+
+    const current = this.getCurrentArticles();
+    const idx = current.findIndex(a => a.id === article.id);
+    if (idx < 0) {
+      return;
+    }
+
+    if (this.onlyUnread) {
+      this.setCurrentArticles(current.filter(a => a.id !== article.id));
+      return;
+    }
+
+    const target = current[idx];
+    const readOverrides = new Map<string, number | string>();
+    readOverrides.set('isRead', 1);
+    const updated = copyArticle(target, readOverrides);
+    const copy = [...current];
+    copy[idx] = updated;
+    this.setCurrentArticles(copy);
+  }
+
+  /** 从数据库重建 feedId→feedTitle 映射 */
+  private async buildFeedMap(): Promise<void> {
+    const db = DatabaseHelper.getInstance();
+    const feeds: Feed[] = await db.getAllFeeds();
+    this.feedMap.clear();
+    for (const f of feeds) {
+      this.feedMap.set(f.id!, f.title);
     }
   }
 
@@ -473,24 +632,41 @@ export struct HomePage {
   }
 
   /**
-   * 标记文章为不感兴趣（列表左滑操作）
+   * 推荐模式：优先使用 AI 排序，无 AI Key 时降级为本地评分
    */
-  private markDislike(article: Article) {
-    MemoryService.getInstance().recordBehavior({
-      timestamp: Date.now(),
-      action: 'RATE',
-      articleId: article.id,
-      articleTitle: article.title,
-      score: -1
-    });
-    const articles = this.getCurrentArticles();
-    const idx = articles.findIndex(a => a.id === article.id);
-    if (idx >= 0) {
-      const copy = [...articles];
-      copy.splice(idx, 1);
-      this.setCurrentArticles(copy);
+  private async loadRecommendArticles(reset: boolean): Promise<Article[]> {
+    const db = DatabaseHelper.getInstance();
+    const recommendSvc = RecommendService.getInstance();
+
+    // 获取待推荐的文章列表（跟随仅未读开关）
+    const allArticles = await db.getRecentArticles(
+      Constants.RECOMMEND_RECENT_DAYS, Constants.RECOMMEND_MAX_ARTICLES, this.onlyUnread);
+    for (const a of allArticles) {
+      a.feedTitle = this.feedMap.get(a.feedId) ?? '';
     }
-    this.exposedArticleIds.delete(article.id!);
+
+    // 如果有 AI Key，优先使用 AI 排序
+    if (reset) {
+      const aiResult = await this.tryAIRanking(allArticles, recommendSvc);
+      if (aiResult !== null) {
+        return aiResult;
+      }
+    }
+
+    // 无 AI Key 或 AI 排序失败：使用本地评分
+    const page = reset ? 0 : this.recommendPage;
+    if (reset) {
+      const result = await recommendSvc.scoreAndSort(allArticles, this.feedMap, page, this.pageSize);
+      this.recommendPage = 1;
+      this.hasMore = result.totalCount > this.pageSize;
+      return result.articles;
+    } else {
+      // 分页取（从缓存评分结果切片）
+      const result = await recommendSvc.scoreAndSort([], this.feedMap, this.recommendPage, this.pageSize);
+      this.recommendPage++;
+      this.hasMore = result.articles.length >= this.pageSize;
+      return result.articles;
+    }
   }
 
   @Builder
@@ -596,229 +772,85 @@ export struct HomePage {
     .justifyContent(FlexAlign.Center)
   }
 
-  @Builder
-  latestListBuilder() {
-    Column() {
-      Refresh({ refreshing: $$this.isRefreshing }) {
-        if (this.isLoading && this.latestArticles.length === 0) {
-          Column() {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-              .backgroundColor(Color.Transparent)
-            Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-        } else if (this.latestArticles.length === 0) {
-          List() {
-            ListItem() {
-              Column({ space: 16 }) {
-                Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
-                Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-              }
-              .width('100%')
-              .height('100%')
-              .justifyContent(FlexAlign.Center)
-            }
-          }
-          .width('100%')
-          .height('100%')
-          .edgeEffect(EdgeEffect.Spring)
-        } else {
-          List() {
-            ForEach(this.latestArticles, (article: Article) => {
-              ListItem() {
-                ArticleItemComponent({
-                  article: article,
-                  recommendReason: '',
-                  onTap: async () => {
-                    if (article.id !== undefined) {
-                      this.exposedArticleIds.delete(article.id);
-                    }
-                    await this.preMarkArticleAsRead(article);
-                    this.getUIContext().getRouter().pushUrl({
-                      url: 'pages/ArticleDetailPage',
-                      params: { articleId: article.id }
-                    });
-                  },
-                  onStarToggle: async () => {
-                    const newStar = article.isStarred === 1 ? 0 : 1;
-                    await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
-                    const idx = this.latestArticles.findIndex(a => a.id === article.id);
-                    if (idx >= 0) {
-                      const updated: Article = {
-                        id: article.id, feedId: article.feedId, feedTitle: article.feedTitle,
-                        guid: article.guid, title: article.title, summary: article.summary,
-                        content: article.content, url: article.url, author: article.author,
-                        publishedAt: article.publishedAt, isRead: article.isRead,
-                        isStarred: newStar, coverImage: article.coverImage, cachedAt: article.cachedAt,
-                        recommendScore: article.recommendScore, recommendReason: article.recommendReason
-                      };
-                      this.latestArticles[idx] = updated;
-                      this.latestArticles = [...this.latestArticles];
-                    }
-                  }
-                })
-              }
-              .swipeAction({
-                end: {
-                  builder: () => {
-                    this.swipeDislikeBuilder(article)
-                  }
-                }
-              })
-            }, (article: Article) => `${this.listVersion}-${article.id}-${article.isStarred}-${article.isRead}`)
+  /**
+   * 尝试 AI 排序：成功返回第一页排序结果，失败或不可用返回 null
+   * 副作用：成功时更新 scoredCache、recommendPage、hasMore
+   */
+  private async tryAIRanking(
+    allArticles: Article[],
+    recommendSvc: RecommendService
+  ): Promise<Article[] | null> {
+    const aiSvc = AIService.getInstance();
+    if (!aiSvc.hasApiKey() || allArticles.length === 0) {
+      return null;
+    }
+    try {
+      const rankedIds = await aiSvc.rankArticles(allArticles);
+      if (rankedIds.length === 0) {
+        return null;
+      }
 
-            ListItem() {
-              Row() {
-                if (this.isLoadingMore) {
-                  LoadingProgress()
-                    .width(24)
-                    .height(24)
-                    .backgroundColor(Color.Transparent)
-                } else if (this.hasMore) {
-                  Button('加载更多')
-                    .fontSize(14)
-                    .fontColor($r('sys.color.ohos_id_color_activated'))
-                    .backgroundColor(Color.Transparent)
-                    .onClick(() => this.loadArticles(false))
-                } else {
-                  Text('已加载全部文章')
-                    .fontSize(13)
-                    .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-                }
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.Center)
-              .padding(16)
-            }
-          }
-          .width('100%')
-          .height('100%')
-          .divider({ strokeWidth: 0.5, color: $r('sys.color.ohos_id_color_list_separator') })
-          .edgeEffect(EdgeEffect.Spring)
+      // 按 AI 返回的 ID 顺序排列
+      const articleMap = new Map<number, Article>();
+      for (const a of allArticles) {
+        if (a.id !== undefined) {
+          articleMap.set(a.id, a);
         }
       }
-      .onRefreshing(() => this.doRefresh())
-      .layoutWeight(1)
+      const sorted: Article[] = [];
+      for (const id of rankedIds) {
+        const a = articleMap.get(id);
+        if (a) {
+          a.recommendReason = Constants.BADGE_AI_RECOMMEND;
+          sorted.push(a);
+          articleMap.delete(id);
+        }
+      }
+      // 未在 AI 结果中的文章：按发布时间倒序排列后追加到末尾
+      const remaining: Article[] = [];
+      articleMap.forEach((a) => {
+        a.recommendReason = Constants.BADGE_RECOMMEND;
+        remaining.push(a);
+      });
+      remaining.sort((a, b) => b.publishedAt - a.publishedAt);
+      for (const a of remaining) {
+        sorted.push(a);
+      }
+
+      // 注入评分缓存供后续分页使用，避免空缓存导致分页返回空列表
+      recommendSvc.setScoredCache(sorted);
+      this.recommendPage = 1;
+      this.hasMore = sorted.length > this.pageSize;
+      return sorted.slice(0, this.pageSize);
+    } catch (e) {
+      console.warn('HomePage', `AI 排序失败，降级到本地评分: ${e}`);
+      return null;
     }
-    .width('100%')
-    .height('100%')
   }
 
-  @Builder
-  recommendListBuilder() {
-    Column() {
-      Refresh({ refreshing: $$this.isRefreshing }) {
-        if (this.isLoading && this.recommendArticles.length === 0) {
-          Column() {
-            LoadingProgress()
-              .width(40)
-              .height(40)
-              .backgroundColor(Color.Transparent)
-            Text('加载中...').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_secondary')).margin({ top: 8 })
-          }
-          .width('100%')
-          .height('100%')
-          .justifyContent(FlexAlign.Center)
-        } else if (this.recommendArticles.length === 0) {
-          List() {
-            ListItem() {
-              Column({ space: 16 }) {
-                Text('暂无文章').fontSize(16).fontColor($r('sys.color.ohos_id_color_text_secondary'))
-                Text('请先在「订阅」页添加RSS源').fontSize(14).fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-              }
-              .width('100%')
-              .height('100%')
-              .justifyContent(FlexAlign.Center)
-            }
-          }
-          .width('100%')
-          .height('100%')
-          .edgeEffect(EdgeEffect.Spring)
-        } else {
-          List() {
-            ForEach(this.recommendArticles, (article: Article) => {
-              ListItem() {
-                ArticleItemComponent({
-                  article: article,
-                  recommendReason: article.recommendReason ?? '',
-                  onTap: async () => {
-                    if (article.id !== undefined) {
-                      this.exposedArticleIds.delete(article.id);
-                      // 记录推荐命中
-                      MemoryService.getInstance().recordBehavior({
-                        timestamp: Date.now(),
-                        action: 'AI_REC_HIT',
-                        articleId: article.id,
-                        articleTitle: article.title,
-                        feedTitle: article.feedTitle
-                      });
-                    }
-                    await this.preMarkArticleAsRead(article);
-                    this.getUIContext().getRouter().pushUrl({
-                      url: 'pages/ArticleDetailPage',
-                      params: { articleId: article.id }
-                    });
-                  },
-                  onStarToggle: async () => {
-                    const newStar = article.isStarred === 1 ? 0 : 1;
-                    await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
-                    const idx = this.recommendArticles.findIndex(a => a.id === article.id);
-                    if (idx >= 0) {
-                      const starOverrides = new Map<string, number | string | undefined>();
-                      starOverrides.set('isStarred', newStar);
-                      this.recommendArticles[idx] = copyArticle(article, starOverrides);
-                      this.recommendArticles = [...this.recommendArticles];
-                    }
-                  }
-                })
-              }
-              .swipeAction({
-                end: {
-                  builder: () => {
-                    this.swipeDislikeBuilder(article)
-                  }
-                }
-              })
-            }, (article: Article) => `${this.listVersion}-${article.id}-${article.isStarred}-${article.isRead}`)
-
-            ListItem() {
-              Row() {
-                if (this.isLoadingMore) {
-                  LoadingProgress()
-                    .width(24)
-                    .height(24)
-                    .backgroundColor(Color.Transparent)
-                } else if (this.hasMore) {
-                  Button('加载更多')
-                    .fontSize(14)
-                    .fontColor($r('sys.color.ohos_id_color_activated'))
-                    .backgroundColor(Color.Transparent)
-                    .onClick(() => this.loadArticles(false))
-                } else {
-                  Text('已加载全部文章')
-                    .fontSize(13)
-                    .fontColor($r('sys.color.ohos_id_color_text_tertiary'))
-                }
-              }
-              .width('100%')
-              .justifyContent(FlexAlign.Center)
-              .padding(16)
-            }
-          }
-          .width('100%')
-          .height('100%')
-          .divider({ strokeWidth: 0.5, color: $r('sys.color.ohos_id_color_list_separator') })
-          .edgeEffect(EdgeEffect.Spring)
-        }
-      }
-      .onRefreshing(() => this.doRefresh())
-      .layoutWeight(1)
+  /**
+   * 标记文章为不感兴趣（列表左滑操作）
+   * 同时落库标记为已读，避免刷新后重新出现在推荐列表中
+   */
+  private markDislike(article: Article) {
+    MemoryService.getInstance().recordBehavior({
+      timestamp: Date.now(),
+      action: 'RATE',
+      articleId: article.id,
+      articleTitle: article.title,
+      score: -1
+    });
+    // 标记为已读，确保刷新后不再出现（仅未读模式 + 推荐查询均生效）
+    if (article.id !== undefined) {
+      DatabaseHelper.getInstance().markRead(article.id, 1);
     }
-    .width('100%')
-    .height('100%')
+    const articles = this.getCurrentArticles();
+    const idx = articles.findIndex(a => a.id === article.id);
+    if (idx >= 0) {
+      const copy = [...articles];
+      copy.splice(idx, 1);
+      this.setCurrentArticles(copy);
+    }
+    this.exposedArticleIds.delete(article.id!);
   }
 }

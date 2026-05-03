@@ -1,6 +1,5 @@
 // 搜索页
-import { router } from '@kit.ArkUI';
-import { Article, Feed, copyArticle } from '../model/Models';
+import { Article, copyArticle, Feed } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
 import { ArticleItemComponent } from '../components/ArticleItemComponent';
 import { MemoryService } from '../service/MemoryService';
@@ -117,7 +116,7 @@ export struct SearchPage {
                     await DatabaseHelper.getInstance().toggleStar(article.id!, newStar);
                     const idx = this.results.findIndex(a => a.id === article.id);
                     if (idx >= 0) {
-                      const starOverrides = new Map<string, number | string | undefined>();
+                      const starOverrides = new Map<string, number | string>();
                       starOverrides.set('isStarred', newStar);
                       this.results[idx] = copyArticle(article, starOverrides);
                       this.results = [...this.results];

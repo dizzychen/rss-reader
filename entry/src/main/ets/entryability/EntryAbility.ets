@@ -17,6 +17,8 @@ const DOMAIN = 0x0000;
 export default class EntryAbility extends UIAbility {
   // 暂存冷启动时的通知来源标记，等 onWindowStageCreate 页面就绪后再 emit
   private pendingNotificationTap: boolean = false;
+  // 暂存备份恢复提示标记，等 onWindowStageCreate 页面就绪后再 emit
+  private pendingRestorePrompt: boolean = false;
 
   async onCreate(want: Want, launchParam: AbilityConstant.LaunchParam): Promise<void> {
     try {
@@ -45,8 +47,8 @@ export default class EntryAbility extends UIAbility {
           // 检查沙箱目录是否有备份
           const hasBackup = await BackupService.getInstance().hasBackupInPublic(this.context);
           if (hasBackup) {
-            // 发送事件，通知首页显示恢复提示
-            this.context.eventHub.emit('need_restore');
+            // 暂存标记，等 onWindowStageCreate 页面就绪后再 emit（避免事件在监听注册前丢失）
+            this.pendingRestorePrompt = true;
           }
         }
       }
@@ -155,6 +157,14 @@ export default class EntryAbility extends UIAbility {
         setTimeout(() => {
           this.context.eventHub.emit('notification_tap');
           hilog.info(DOMAIN, 'RSSReader', '冷启动通知事件已发送: notification_tap');
+        }, 600);
+      }
+      // 页面加载完毕，如果是备份恢复提示，延迟 emit 确保 HomePage aboutToAppear 已注册监听
+      if (this.pendingRestorePrompt) {
+        this.pendingRestorePrompt = false;
+        setTimeout(() => {
+          this.context.eventHub.emit('need_restore');
+          hilog.info(DOMAIN, 'RSSReader', '备份恢复提示事件已发送: need_restore');
         }, 600);
       }
     });
