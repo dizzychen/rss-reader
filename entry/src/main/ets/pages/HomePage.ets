@@ -37,7 +37,6 @@ export struct HomePage {
   private tabController: TabsController = new TabsController();
   private isFullReloading: boolean = false; // 防止并发 loadArticles(true)
   private sortModeReady: boolean = false; // sortMode 是否已从持久化恢复完毕
-  private syncTimerId: number = -1; // syncArticleStatus 中 setTimeout 的 ID
 
   /** 获取当前 Tab 对应的文章列表 */
   private getCurrentArticles(): Article[] {
@@ -75,11 +74,6 @@ export struct HomePage {
     if (hostContext && this.restoreListener) {
       hostContext.eventHub.off('need_restore', this.restoreListener);
       this.restoreListener = null;
-    }
-    // 清理定时器
-    if (this.syncTimerId !== -1) {
-      clearTimeout(this.syncTimerId);
-      this.syncTimerId = -1;
     }
   }
 
@@ -157,6 +151,12 @@ export struct HomePage {
   onRefreshTickChanged() {
     // 从详情页返回时，仅增量同步文章状态（已读/收藏），不重新加载列表
     // 避免"仅未读"模式下已读文章突然消失造成界面抖动
+    // 若正在执行 loadArticles(true)（如下拉刷新或后台刷新触发的完整重载），
+    // 则放弃本次同步：完整重载会从 DB 拉取最新状态，无需增量同步
+    if (this.isFullReloading) {
+      console.info('HomePage', 'onRefreshTickChanged: 正在完整重载，跳过增量同步');
+      return;
+    }
     this.syncArticleStatus();
   }
 
@@ -537,16 +537,29 @@ export struct HomePage {
 
   /**
    * 增量同步：更新当前列表中文章的已读/收藏状态
-   * 当 onlyUnread=true 时，已读文章通过动画平滑移除，避免界面抖动
+   * 当 onlyUnread=true 时，已读文章直接从列表中移除（已落库的状态权威），避免界面抖动
+   *
+   * 并发保护：
+   * - 进入时记录 listVersion 快照；await 期间若 loadArticles(true) 完成会自增 listVersion
+   * - 写回前比对 listVersion，如已变化则放弃本次同步，避免用旧快照覆盖新列表
+   *   （否则会出现已读文章被重新写回未读列表的 BUG）
    */
   private async syncArticleStatus() {
     const articles = this.getCurrentArticles();
     if (articles.length === 0) return;
+    const versionSnapshot = this.listVersion;
     try {
       const ids = articles.filter(a => a.id !== undefined).map(a => a.id!);
       const statusMap = await DatabaseHelper.getInstance().getArticlesStatus(ids);
+
+      // 并发保护：await 期间列表已被 loadArticles(true) 完整重载，丢弃本次旧快照
+      if (this.listVersion !== versionSnapshot) {
+        console.info('HomePage', 'syncArticleStatus: listVersion 已变更，丢弃旧快照');
+        return;
+      }
+
       let changed = false;
-      // 收集新变为已读的文章 ID
+      // 收集新变为已读的文章 ID（用于 onlyUnread 模式下直接过滤）
       const newlyReadIds = new Set<number>();
       const updated: Article[] = articles.map(a => {
         const status = a.id !== undefined ? statusMap.get(a.id) : undefined;
@@ -568,16 +581,10 @@ export struct HomePage {
       });
       if (changed) {
         if (this.onlyUnread && newlyReadIds.size > 0) {
-          // 先更新状态（让文章样式变灰），再用动画移除
-          this.setCurrentArticles(updated);
-          // 短暂延迟后平滑移除已读文章
-          this.syncTimerId = setTimeout(() => {
-            this.syncTimerId = -1;
-            animateTo({ duration: 300, curve: Curve.EaseInOut }, () => {
-              const current = this.getCurrentArticles();
-              this.setCurrentArticles(current.filter(a => !newlyReadIds.has(a.id!)));
-            });
-          }, 150);
+          // 仅未读模式：直接过滤已读文章，避免延迟期间列表被重载导致已读文章再次出现
+          // （旧实现先写回包含已读的列表再 setTimeout 过滤，会与并发的 loadArticles 产生竞态）
+          const filtered = updated.filter(a => !newlyReadIds.has(a.id!));
+          this.setCurrentArticles(filtered);
         } else {
           this.setCurrentArticles(updated);
         }
