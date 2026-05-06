@@ -45,7 +45,7 @@ interface TopicTrend {
   consecutiveDecline: number; // 连续下降天数
   firstSeen: string;
   lastSeen: string;
-  hitCount: number; // 该话题命中的推荐点击次数
+  daysPresent: number; // 该话题在画像中出现的累计天数
 }
 
 /** 来源质量评分 */
@@ -66,6 +66,13 @@ interface StrategyRecord {
   hitRate: number;
   totalExposures: number;
   totalHits: number;
+}
+
+/** 策略趋势分析结果 */
+interface StrategyTrendResult {
+  improving: boolean;
+  avgHitRate: number;
+  recentRates: number[];
 }
 
 /** 持久化的完整学习状态 */
@@ -94,7 +101,14 @@ const DEFAULT_ADAPTIVE_WEIGHTS: AdaptiveWeights = {
 
 const DEFAULT_STATE: LearningState = {
   version: 1,
-  adaptiveWeights: { ...DEFAULT_ADAPTIVE_WEIGHTS },
+  adaptiveWeights: {
+    content: DEFAULT_ADAPTIVE_WEIGHTS.content,
+    topic: DEFAULT_ADAPTIVE_WEIGHTS.topic,
+    freshness: DEFAULT_ADAPTIVE_WEIGHTS.freshness,
+    feed: DEFAULT_ADAPTIVE_WEIGHTS.feed,
+    updatedAt: DEFAULT_ADAPTIVE_WEIGHTS.updatedAt,
+    confidence: DEFAULT_ADAPTIVE_WEIGHTS.confidence
+  },
   dimensionTrackers: {},
   topicTrends: {},
   feedQualities: {},
@@ -167,7 +181,12 @@ export class LearningService {
    * 记录一次推荐结果：用户是否点击 + 阅读时长
    * 这是自学习的核心反馈信号
    */
-  recordOutcome(dims: DimensionSnapshot, wasClicked: boolean, readDurationSec: number = 0): void {
+  recordOutcome(
+    dims: DimensionSnapshot,
+    wasClicked: boolean,
+    readDurationSec: number = 0,
+    feedTitle?: string
+  ): void {
     this.state.totalLearnings++;
 
     const dominant = this.getDominantDimension(dims);
@@ -176,13 +195,18 @@ export class LearningService {
     }
 
     const tracker = this.ensureTracker(dominant);
+    tracker.exposures++;
     if (wasClicked) {
       tracker.hits++;
       tracker.lastHitDate = DateUtil.today();
     }
 
-    // 每个维度都根据结果微调
     this.adjustWeightsFromOutcome(dims, wasClicked, readDurationSec);
+
+    // 来源质量评分：根据反馈更新 feed 质量
+    if (feedTitle) {
+      this.updateFeedQuality(feedTitle, wasClicked, readDurationSec);
+    }
   }
 
   /**
@@ -200,7 +224,7 @@ export class LearningService {
         const prevWeight = existing.currentWeight;
         existing.currentWeight = weight;
         existing.lastSeen = today;
-        existing.hitCount++;
+        existing.daysPresent++;
 
         // 趋势判断：双向阈值检测
         if (weight >= prevWeight * Constants.LEARNING_TOPIC_GROWTH_THRESHOLD) {
@@ -226,7 +250,7 @@ export class LearningService {
           consecutiveDecline: 0,
           firstSeen: today,
           lastSeen: today,
-          hitCount: 1
+          daysPresent: 1
         };
         this.state.topicTrends[keyword] = trend;
         result.set(keyword, trend);
@@ -236,17 +260,8 @@ export class LearningService {
       result.set(keyword, existing);
     });
 
-    // 清理超过 30 天未出现的话题
-    const thirtyDaysAgo = DateUtil.daysAgo(30);
-    const keysToRemove: string[] = [];
-    Object.keys(this.state.topicTrends).forEach(k => {
-      if (this.state.topicTrends[k].lastSeen < thirtyDaysAgo) {
-        keysToRemove.push(k);
-      }
-    });
-    for (const k of keysToRemove) {
-      delete this.state.topicTrends[k];
-    }
+    // 超过 30 天未出现的话题在 getCoreTopics/getEmergingTopics 中自然过滤
+    // ArkTS 禁止 delete 操作符，依赖趋势分类逻辑自动忽略过期条目
 
     return result;
   }
@@ -299,11 +314,21 @@ export class LearningService {
     const lr = Constants.LEARNING_RATE;
 
     if (existing) {
-      // EMA 更新
+      // EMA 更新点击率
+      const prevEngagement = existing.engagementRate;
       existing.engagementRate = this.lerp(
-        existing.engagementRate,
+        prevEngagement,
         wasClicked ? 1.0 : 0.0,
         lr * 3
+      );
+
+      // 一致性追踪：预测偏差越小越一致
+      const actual = wasClicked ? 1.0 : 0.0;
+      const predictionError = Math.abs(actual - prevEngagement);
+      existing.consistency = this.lerp(
+        existing.consistency,
+        1.0 - predictionError,
+        lr * 2
       );
 
       if (wasClicked && readDurationSec > 0) {
@@ -365,9 +390,13 @@ export class LearningService {
     const today = DateUtil.today();
     // 替换当天已有记录，避免重复
     const existingIdx = this.state.strategyHistory.findIndex(s => s.date === today);
+    const w = this.state.adaptiveWeights;
     const record: StrategyRecord = {
       date: today,
-      weights: { ...this.state.adaptiveWeights },
+      weights: {
+        content: w.content, topic: w.topic, freshness: w.freshness, feed: w.feed,
+        updatedAt: w.updatedAt, confidence: w.confidence
+      },
       hitRate: hitRate,
       totalExposures: exposures,
       totalHits: hits
@@ -386,10 +415,11 @@ export class LearningService {
   /**
    * 获取策略效果趋势（用于 MEMORY.md）
    */
-  getStrategyTrend(): { improving: boolean; avgHitRate: number; recentRates: number[] } {
+  getStrategyTrend(): StrategyTrendResult {
     const recent = this.state.strategyHistory.slice(-14);
     if (recent.length < 3) {
-      return { improving: false, avgHitRate: 0, recentRates: [] };
+      const empty: StrategyTrendResult = { improving: false, avgHitRate: 0, recentRates: [] };
+      return empty;
     }
     const rates = recent.map(s => s.hitRate).filter(r => r >= 0);
     const avgHitRate = rates.reduce((a, b) => a + b, 0) / Math.max(1, rates.length);
@@ -398,11 +428,12 @@ export class LearningService {
     const prev3 = rates.slice(-6, -3);
     const recent3Avg = recent3.length > 0 ? recent3.reduce((a, b) => a + b, 0) / recent3.length : 0;
     const prev3Avg = prev3.length > 0 ? prev3.reduce((a, b) => a + b, 0) / prev3.length : 0;
-    return {
+    const result: StrategyTrendResult = {
       improving: recent3Avg > prev3Avg,
       avgHitRate: Math.round(avgHitRate * 1000) / 1000,
       recentRates: rates.map(r => Math.round(r * 1000) / 1000)
     };
+    return result;
   }
 
   // ==================== 兴趣趋势检测 ====================
@@ -418,6 +449,28 @@ export class LearningService {
     lines.push('# 记忆共识 (Memory Consensus)');
     lines.push(`> 自动生成于 ${today}，蒸馏自所有记忆层的高阶洞察`);
     lines.push('');
+
+    // ---- 身份摘要 (L0 SOUL) ----
+    if (soul.trim()) {
+      const identity = this.extractIdentityLine(soul);
+      if (identity) {
+        lines.push('## 我是谁');
+        lines.push('');
+        lines.push(identity);
+        lines.push('');
+      }
+    }
+
+    // ---- 阅读画像摘要 (L1 PROFILE) ----
+    if (profile.trim()) {
+      const styleLine = this.extractStyleFromProfile(profile);
+      if (styleLine) {
+        lines.push('## 阅读画像');
+        lines.push('');
+        lines.push(styleLine);
+        lines.push('');
+      }
+    }
 
     // ---- 自适应权重 ----
     const w = this.state.adaptiveWeights;
@@ -447,7 +500,7 @@ export class LearningService {
     if (coreTopics.length > 0) {
       lines.push('### 核心兴趣 🔒');
       for (const t of coreTopics.slice(0, 5)) {
-        lines.push(`- **${t.keyword}** (weight: ${t.currentWeight.toFixed(2)}, hits: ${t.hitCount})`);
+        lines.push(`- **${t.keyword}** (weight: ${t.currentWeight.toFixed(2)}, ${t.daysPresent}天)`);
       }
       lines.push('');
     }
@@ -558,8 +611,24 @@ export class LearningService {
    * 重置学习数据
    */
   async resetLearning(): Promise<void> {
-    this.state = { ...DEFAULT_STATE };
-    this.state.totalSessions = 0;
+    this.state = {
+      version: DEFAULT_STATE.version,
+      adaptiveWeights: {
+        content: DEFAULT_STATE.adaptiveWeights.content,
+        topic: DEFAULT_STATE.adaptiveWeights.topic,
+        freshness: DEFAULT_STATE.adaptiveWeights.freshness,
+        feed: DEFAULT_STATE.adaptiveWeights.feed,
+        updatedAt: DEFAULT_STATE.adaptiveWeights.updatedAt,
+        confidence: DEFAULT_STATE.adaptiveWeights.confidence
+      },
+      dimensionTrackers: {},
+      topicTrends: {},
+      feedQualities: {},
+      strategyHistory: [],
+      lastConsolidationDate: '',
+      totalSessions: 0,
+      totalLearnings: 0
+    };
     this.state.totalLearnings = 0;
     await this.saveState();
     console.info(TAG, '学习数据已重置');
@@ -609,13 +678,38 @@ export class LearningService {
 
   // ==================== 记忆共识生成 (MEMORY.md) ====================
 
+  /** 从 DimensionSnapshot 中按 key 取值（ArkTS 禁止 obj[key] 语法） */
+  private getDim(dims: DimensionSnapshot, key: keyof DimensionSnapshot): number {
+    if (key === 'content') return dims.content;
+    if (key === 'topic') return dims.topic;
+    if (key === 'freshness') return dims.freshness;
+    return dims.feed;
+  }
+
+  /** 从 AdaptiveWeights 中按 key 取值 */
+  private getWeightVal(w: AdaptiveWeights, key: keyof DimensionSnapshot): number {
+    if (key === 'content') return w.content;
+    if (key === 'topic') return w.topic;
+    if (key === 'freshness') return w.freshness;
+    return w.feed;
+  }
+
+  /** 向 AdaptiveWeights 的指定 key 增加 delta */
+  private addWeightDelta(w: AdaptiveWeights, key: keyof DimensionSnapshot, delta: number): void {
+    if (key === 'content') w.content += delta;
+    else if (key === 'topic') w.topic += delta;
+    else if (key === 'freshness') w.freshness += delta;
+    else w.feed += delta;
+  }
+
   private getDominantDimension(dims: DimensionSnapshot): keyof DimensionSnapshot | null {
     let maxKey: keyof DimensionSnapshot | null = null;
     let maxVal = 0;
     const keys: (keyof DimensionSnapshot)[] = ['content', 'topic', 'freshness', 'feed'];
     for (const k of keys) {
-      if (dims[k] > maxVal) {
-        maxVal = dims[k];
+      const val = this.getDim(dims, k);
+      if (val > maxVal) {
+        maxVal = val;
         maxKey = k;
       }
     }
@@ -646,30 +740,28 @@ export class LearningService {
     readDurationSec: number
   ): void {
     const w = this.state.adaptiveWeights;
-    const lr = Constants.LEARNING_RATE; // 学习率
-
-    // 深度阅读（>60s）给予更强正反馈
-    const depthBonus = readDurationSec > 60 ? 1.5 : 1.0;
-    // 快速跳过（<10s 但点击了）给予弱负反馈
-    const skimPenalty = (wasClicked && readDurationSec > 0 && readDurationSec < 10) ? 0.5 : 1.0;
+    const lr = Constants.LEARNING_RATE;
 
     const totalDims = dims.content + dims.topic + dims.freshness + dims.feed;
     if (totalDims < 0.001) {
       return;
     }
+    const dominant = this.getDominantDimension(dims);
+    if (dominant === null) {
+      return;
+    }
+    const domFraction = this.getDim(dims, dominant) / totalDims;
 
     if (wasClicked) {
-      // 点击：按各维度贡献比例正向调整
-      w.content += lr * (dims.content / totalDims) * depthBonus * skimPenalty;
-      w.topic += lr * (dims.topic / totalDims) * depthBonus * skimPenalty;
-      w.freshness += lr * (dims.freshness / totalDims) * depthBonus * skimPenalty;
-      w.feed += lr * (dims.feed / totalDims) * depthBonus * skimPenalty;
+      // 深度阅读（>60s）给予更强正向调整
+      const depthBonus = readDurationSec > 60 ? 1.5 : 1.0;
+      // 快速浏览（点击但<10s离开）给予弱负向调整
+      const skimPenalty = (readDurationSec > 0 && readDurationSec < 10) ? 0.5 : 1.0;
+      // 仅增强主导维度，归一化后权重自然向主导维度偏移
+      this.addWeightDelta(w, dominant, lr * domFraction * depthBonus * skimPenalty);
     } else {
       // 未点击：主导维度轻微负向调整
-      const dominant = this.getDominantDimension(dims);
-      if (dominant) {
-        w[dominant] -= lr * 0.3;
-      }
+      this.addWeightDelta(w, dominant, -lr * 0.3 * domFraction);
     }
 
     // 归一化权重总和为 1
@@ -697,7 +789,7 @@ export class LearningService {
   }
 
   private classifyTrend(t: TopicTrend): 'emerging' | 'stable' | 'fading' | 'core' {
-    if (t.hitCount >= 10 && t.currentWeight >= 0.3) {
+    if (t.daysPresent >= 10 && t.currentWeight >= 0.3) {
       return 'core'; // 长期高频话题
     }
     if (t.consecutiveGrowth >= Constants.LEARNING_CONSECUTIVE_DAYS) {
@@ -726,20 +818,50 @@ export class LearningService {
   }
 
   private describeWeightChange(dim: keyof DimensionSnapshot): string {
-    const d = Constants as Record<string, number>;
-    const defaultMap: Record<string, number> = {
-      'content': Constants.W_CONTENT,
-      'topic': Constants.W_TOPIC,
-      'freshness': Constants.W_FRESHNESS,
-      'feed': Constants.W_FEED
-    };
-    const def = defaultMap[dim];
-    const cur = this.state.adaptiveWeights[dim];
-    const diff = cur - def;
+    let defVal: number;
+    if (dim === 'content') defVal = Constants.W_CONTENT;
+    else if (dim === 'topic') defVal = Constants.W_TOPIC;
+    else if (dim === 'freshness') defVal = Constants.W_FRESHNESS;
+    else defVal = Constants.W_FEED;
+    const cur = this.getWeightVal(this.state.adaptiveWeights, dim);
+    const diff = cur - defVal;
     if (Math.abs(diff) < 0.02) {
       return '(与默认持平)';
     }
     return diff > 0 ? `↑ 高于默认 ${diff.toFixed(2)}` : `↓ 低于默认 ${Math.abs(diff).toFixed(2)}`;
+  }
+
+  /** 从 SOUL.md 中提取身份摘要（关于我 第一行） */
+  private extractIdentityLine(soul: string): string {
+    const aboutMatch = soul.match(/## 关于我\n+([^\n]+)/);
+    if (aboutMatch) {
+      return `> ${aboutMatch[1].trim()}`;
+    }
+    // 降级：取前 80 个非空字符
+    const firstLine = soul.split('\n').find(l => l.trim() && !l.startsWith('#') && !l.startsWith('>'));
+    return firstLine ? `> ${firstLine.trim().substring(0, 80)}` : '';
+  }
+
+  /** 从 PROFILE.md 中提取阅读风格和日均阅读数据 */
+  private extractStyleFromProfile(profile: string): string {
+    const parts: string[] = [];
+    // 提取日均阅读和阅读天数
+    const overviewMatch = profile.match(/\| 日均阅读 \| ([^|]+) \|/);
+    const daysMatch = profile.match(/\| 累计阅读天数 \| ([^|]+) \|/);
+    if (overviewMatch && daysMatch) {
+      parts.push(`日均 ${overviewMatch[1].trim()} 篇，累计 ${daysMatch[1].trim()} 天`);
+    }
+    // 提取阅读风格
+    const styleMatch = profile.match(/\*{0,2}阅读风格[:：]\s*(.+)/);
+    if (styleMatch) {
+      parts.push(`风格：${styleMatch[1].trim()}`);
+    }
+    // 提取偏好时段
+    const timeMatch = profile.match(/\*{0,2}偏好阅读时段[:：]\s*(.+)/);
+    if (timeMatch) {
+      parts.push(`偏好时段：${timeMatch[1].trim()}`);
+    }
+    return parts.join('  |  ');
   }
 }
 

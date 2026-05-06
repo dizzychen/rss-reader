@@ -464,7 +464,8 @@ export struct HomePage {
                               feed: 0.05
                             },
                             true, // wasClicked
-                            0     // duration unknown at click time, will be updated by ArticleDetailPage
+                            0,    // duration unknown at click time
+                            article.feedTitle
                           );
                         }
                       }
@@ -792,6 +793,11 @@ export struct HomePage {
   /**
    * 尝试 AI 排序：成功返回第一页排序结果，失败或不可用返回 null
    * 副作用：成功时更新 scoredCache、recommendPage、hasMore
+   *
+   * 角标策略：
+   * - AI 排序命中的文章 → 'AI 推荐'
+   * - 未命中（如 AI 缓存只覆盖部分文章）→ 走本地评分获取精细角标（话题匹配/内容相关/最新发布）
+   *   而不是统一打"推荐"，避免用户感受到 "为什么有的有 AI 推荐角标，有的没有" 的不一致
    */
   private async tryAIRanking(
     allArticles: Article[],
@@ -807,7 +813,7 @@ export struct HomePage {
         return null;
       }
 
-      // 按 AI 返回的 ID 顺序排列
+      // 按 AI 返回的 ID 顺序排列命中的文章
       const articleMap = new Map<number, Article>();
       for (const a of allArticles) {
         if (a.id !== undefined) {
@@ -823,18 +829,21 @@ export struct HomePage {
           articleMap.delete(id);
         }
       }
-      // 未在 AI 结果中的文章：按发布时间倒序排列后追加到末尾
+
+      // 未被 AI 排到的文章：通过本地评分获得精细角标（话题匹配/内容相关/最新发布）
       const remaining: Article[] = [];
-      articleMap.forEach((a) => {
-        a.recommendReason = Constants.BADGE_RECOMMEND;
-        remaining.push(a);
-      });
-      remaining.sort((a, b) => b.publishedAt - a.publishedAt);
-      for (const a of remaining) {
-        sorted.push(a);
+      articleMap.forEach((a) => remaining.push(a));
+      if (remaining.length > 0) {
+        // 本地评分会就地修改 article.recommendReason 和 recommendScore
+        const localResult = await recommendSvc.scoreAndSort(
+          remaining, this.feedMap, 0, remaining.length);
+        for (const a of localResult.articles) {
+          sorted.push(a);
+        }
       }
 
       // 注入评分缓存供后续分页使用，避免空缓存导致分页返回空列表
+      // 注意：scoreAndSort 内部会写 scoredCache，这里需要覆盖回完整列表
       recommendSvc.setScoredCache(sorted);
       this.recommendPage = 1;
       this.hasMore = sorted.length > this.pageSize;

@@ -300,15 +300,23 @@ export class ProfileService {
     return result;
   }
 
+  private isRegenerating: boolean = false;
+
   /**
    * 重新生成用户画像并保存（统计 + AI 综合）
+   * 带并发守卫，防止同时两次 regenerate 导致 LESSONS.md 写竞态
    */
   async regenerate(): Promise<void> {
+    if (this.isRegenerating) {
+      console.info('ProfileService', 'regenerate 已在执行中，跳过重复调用');
+      return;
+    }
     const memSvc = MemoryService.getInstance();
     if (!memSvc.isReady()) {
       return;
     }
 
+    this.isRegenerating = true;
     try {
       // 先落盘行为队列，确保推荐曝光/命中统计是最新值
       await memSvc.flushBehaviors();
@@ -458,6 +466,8 @@ export class ProfileService {
     } catch (e) {
       const msg = e instanceof Error ? e.message : String(e);
       console.error('ProfileService', `regenerate failed: ${msg}`);
+    } finally {
+      this.isRegenerating = false;
     }
   }
 
@@ -467,7 +477,9 @@ export class ProfileService {
    */
   private consolidateMemoryAsync(memSvc: MemoryService): void {
     const learnSvc = getLearningService();
-    Promise.all([memSvc.getSoul(), memSvc.getProfile()]).then(([soul, profile]) => {
+    Promise.all([memSvc.getSoul(), memSvc.getProfile()]).then((results: string[]) => {
+      const soul = results[0];
+      const profile = results[1];
       learnSvc.generateConsolidatedMemory(soul, profile).then(async (content) => {
         const path = `${memSvc.getFilesDir()}/${Constants.MEMORY_CONSOLIDATED_FILE}`;
         await MemoryFileHelper.writeMarkdown(path, content);
