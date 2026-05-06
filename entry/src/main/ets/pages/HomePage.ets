@@ -151,10 +151,11 @@ export struct HomePage {
   onRefreshTickChanged() {
     // 从详情页返回时，仅增量同步文章状态（已读/收藏），不重新加载列表
     // 避免"仅未读"模式下已读文章突然消失造成界面抖动
-    // 若正在执行 loadArticles(true)（如下拉刷新或后台刷新触发的完整重载），
-    // 则放弃本次同步：完整重载会从 DB 拉取最新状态，无需增量同步
-    if (this.isFullReloading) {
-      console.info('HomePage', 'onRefreshTickChanged: 正在完整重载，跳过增量同步');
+    // 若正在执行 loadArticles（完整重载或加载更多），则放弃本次同步：
+    // - loadArticles(true) 会从 DB 拉取最新状态，无需增量同步
+    // - loadArticles(false) 加载更多过程中如用旧快照写回，会丢失刚追加的数据
+    if (this.isFullReloading || this.isLoadingMore) {
+      console.info('HomePage', 'onRefreshTickChanged: 列表加载中，跳过增量同步');
       return;
     }
     this.syncArticleStatus();
@@ -223,9 +224,12 @@ export struct HomePage {
         }
       }
       if (reset) {
+        // listVersion 必须在 setCurrentArticles 之前自增：
+        // 确保任何并发执行中的 syncArticleStatus 在 await 返回时看到的 listVersion
+        // 已经变化，从而丢弃旧快照，避免用旧数据覆盖刚写入的新列表
+        this.listVersion++;
         this.setCurrentArticles(items);
         this.exposedArticleIds.clear();
-        this.listVersion++;
       } else {
         this.setCurrentArticles(this.getCurrentArticles().concat(items));
       }
