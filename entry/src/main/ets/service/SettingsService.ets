@@ -121,9 +121,11 @@ export class SettingsService {
   // ===== AI 提供商配置 =====
 
   async getAIProvider(): Promise<string> {
-    if (!this.prefs) return 'qwen';
-    const v = await this.prefs.get(Constants.PREF_AI_PROVIDER, 'qwen');
-    return typeof v === 'string' ? v : 'qwen';
+    if (!this.prefs) {
+      return 'deepseek';
+    }
+    const v = await this.prefs.get(Constants.PREF_AI_PROVIDER, 'deepseek');
+    return typeof v === 'string' ? v : 'deepseek';
   }
 
   async setAIProvider(provider: string): Promise<void> {
@@ -131,9 +133,11 @@ export class SettingsService {
   }
 
   async getAIBaseUrl(): Promise<string> {
-    if (!this.prefs) return '';
-    const v = await this.prefs.get(Constants.PREF_AI_BASE_URL, '');
-    return typeof v === 'string' ? v : '';
+    if (!this.prefs) {
+      return 'https://api.deepseek.com';
+    }
+    const v = await this.prefs.get(Constants.PREF_AI_BASE_URL, 'https://api.deepseek.com');
+    return typeof v === 'string' ? v : 'https://api.deepseek.com';
   }
 
   async setAIBaseUrl(url: string): Promise<void> {
@@ -141,9 +145,11 @@ export class SettingsService {
   }
 
   async getAIModelName(): Promise<string> {
-    if (!this.prefs) return '';
-    const v = await this.prefs.get(Constants.PREF_AI_MODEL_NAME, '');
-    return typeof v === 'string' ? v : '';
+    if (!this.prefs) {
+      return 'deepseek-v4-flash';
+    }
+    const v = await this.prefs.get(Constants.PREF_AI_MODEL_NAME, 'deepseek-v4-flash');
+    return typeof v === 'string' ? v : 'deepseek-v4-flash';
   }
 
   async setAIModelName(name: string): Promise<void> {

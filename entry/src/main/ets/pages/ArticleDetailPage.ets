@@ -1,4 +1,3 @@
-import { router } from '@kit.ArkUI';
 import { webview } from '@kit.ArkWeb';
 import { Article } from '../model/Models';
 import { DatabaseHelper } from '../database/DatabaseHelper';
@@ -541,12 +540,32 @@ struct ArticleDetailPage {
                     .width('100%')
 
                     if (this.isAILoading && this.aiAnalysis.length === 0) {
-                      // 还未收到任何文字，显示等待提示
-                      Row({ space: 8 }) {
-                        Text('AI 正在总结...').fontSize(13)
+                      // 还未收到任何文字，显示明显的等待动画
+                      Column({ space: 12 }) {
+                        LoadingProgress()
+                          .width(36)
+                          .height(36)
+                          .color($r('sys.color.ohos_id_color_activated'))
+
+                        Text('AI 正在思考中，请稍候...')
+                          .fontSize(14)
                           .fontColor($r('sys.color.ohos_id_color_text_secondary'))
+
+                        // 骨架占位条，模拟即将出现的文本
+                        Column({ space: 8 }) {
+                          Row().width('90%').height(12).borderRadius(6)
+                            .backgroundColor('#E0E8F5')
+                          Row().width('75%').height(12).borderRadius(6)
+                            .backgroundColor('#E0E8F5')
+                          Row().width('60%').height(12).borderRadius(6)
+                            .backgroundColor('#E0E8F5')
+                        }
+                        .width('100%')
+                        .alignItems(HorizontalAlign.Start)
                       }
-                      .width('100%').padding({ top: 4, bottom: 4 })
+                      .width('100%')
+                      .padding({ top: 16, bottom: 16 })
+                      .alignItems(HorizontalAlign.Center)
                     } else if (this.aiAnalysis.length > 0) {
                       // 有文字（流式输出中或已完成），用 Markdown 渲染
                       LvMarkdownIn({

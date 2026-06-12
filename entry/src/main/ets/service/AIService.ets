@@ -93,9 +93,9 @@ class OpenAIResponse {
 export class AIService {
   private static instance: AIService;
   private apiKey: string = '';
-  private provider: string = 'qwen';
-  private baseUrl: string = '';
-  private model: string = '';
+  private provider: string = 'deepseek';
+  private baseUrl: string = 'https://api.deepseek.com';
+  private model: string = 'deepseek-v4-flash';
 
   /**
    * 统一错误消息提取：兼容 Error 和 HarmonyOS BusinessError { code, message }
@@ -196,149 +196,92 @@ export class AIService {
   }
 
   /**
-   * 通义千问原生 API 调用
+   * 精读辅助分析
    */
-  private async chatQwen(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
-    const messages: QwenMessage[] = [];
-    messages.push(new QwenMessage('system', systemPrompt));
-    messages.push(new QwenMessage('user', userPrompt));
+  async analyzeArticle(article: Article): Promise<string> {
+    if (!this.hasApiKey()) {
+      throw new Error('未配置 AI API Key');
+    }
 
-    const input = new QwenInput();
-    input.messages = messages;
-
-    const params = new QwenParameters();
-    params.result_format = 'message';
-    params.max_tokens = maxTokens;
-    params.temperature = 0.7;
-
-    const requestBody = new QwenRequest();
-    // 优先使用用户配置的模型名，否则用默认值
-    requestBody.model = this.model.length > 0 ? this.model : Constants.QWEN_MODEL;
-    requestBody.input = input;
-    requestBody.parameters = params;
-
-    // 优先使用自定义 Base URL（通义千问兼容场景），否则使用官方地址
-    const url = this.baseUrl.length > 0 ? this.baseUrl : Constants.QWEN_API_URL;
-
-    const httpRequest = http.createHttp();
     try {
-      console.info('AIService', `chatQwen: url=${url}, model=${requestBody.model}`);
-      const response = await httpRequest.request(
-        url,
-        {
-          method: http.RequestMethod.POST,
-          header: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`
-          },
-          extraData: JSON.stringify(requestBody),
-          connectTimeout: 15000,
-          readTimeout: 60000
-        }
-      );
+      const context = await MemoryService.getInstance().buildLayeredContext(1); // L0+L1: 解读只需偏好
 
-      // 先检查 HTTP 状态码
-      if (response.responseCode !== 200) {
-        // 尝试解析错误响应
-        let errMsg = `HTTP ${response.responseCode}`;
-        try {
-          const errResult = JSON.parse(response.result as string) as QwenResponse;
-          if (errResult.message) {
-            errMsg = `${errResult.code || ''} ${errResult.message}`;
-          }
-        } catch {
-          // 响应不是 JSON，使用原始错误码
-        }
-        throw new Error(`API 错误: ${errMsg}`);
-      }
+      const content = (article.content || article.summary || '').substring(0, 2000);
 
-      const result = JSON.parse(response.result as string) as QwenResponse;
+      const systemPrompt = context
+        ? `你是我的私人阅读助手，了解我的阅读偏好。\n\n${context}`
+        : '你是一个智能阅读助手。';
 
-      // 兼容两种响应格式：
-      // 1. result_format='text' 时，返回 output.text
-      // 2. result_format='message' 时，返回 output.choices[0].message.content
-      if (result.output?.choices && result.output.choices.length > 0) {
-        return result.output.choices[0].message.content || '';
-      }
-      return result.output?.text ?? '';
-    } finally {
-      httpRequest.destroy();
+      const userPrompt = `请对以下文章进行解读：
+
+标题：${article.title}
+来源：${article.feedTitle ?? '未知'}
+内容：${content}
+
+请提供：
+1. 摘要正文（90-140字，2-3句，包含"发生了什么 + 为什么重要/影响 + 结论"）
+2. **核心观点**（1-2条，每条不超过14字）
+
+输出要求：
+- 第一段直接输出摘要正文，不要写"文章总结""摘要："等标签
+- 然后再输出"核心观点"条目
+- 信息要具体，避免空话、套话和重复`;
+
+      return await this.chat(systemPrompt, userPrompt, 1024);
+    } catch (e) {
+      const msg = AIService.extractErrMsg(e);
+      console.error('AIService', `analyzeArticle failed: ${msg}`);
+      throw new Error(`analyzeArticle failed: ${msg}`);
     }
   }
 
   /**
-   * OpenAI 兼容协议调用（适用于 OpenAI、DeepSeek、Groq、自定义等）
+   * 流式精读辅助分析：通过回调逐步返回文字
+   * @param article 待分析的文章
+   * @param onChunk 每次收到新文本块时的回调
+   * @param onDone 流式输出结束时的回调
+   * @param onError 出错时的回调
    */
-  private async chatOpenAI(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
-    const apiUrl = this.resolveOpenAIUrl();
-    if (apiUrl.length === 0) {
-      throw new Error('未配置 API 端点，请在设置中填写 Base URL');
+  async analyzeArticleStream(
+    article: Article,
+    onChunk: (text: string) => void,
+    onDone: () => void,
+    onError: (msg: string) => void
+  ): Promise<void> {
+    if (!this.hasApiKey()) {
+      onError('未配置 AI API Key，请在设置中配置');
+      return;
     }
 
-    const modelName = this.resolveModelName();
-    if (modelName.length === 0) {
-      throw new Error('未配置模型名称，请在设置中填写模型名称');
-    }
-
-    const messages: OpenAIMessage[] = [];
-    messages.push(new OpenAIMessage('system', systemPrompt));
-    messages.push(new OpenAIMessage('user', userPrompt));
-
-    const requestBody = new OpenAIRequest();
-    requestBody.model = modelName;
-    requestBody.messages = messages;
-    requestBody.max_tokens = maxTokens;
-    requestBody.temperature = 0.7;
-
-    const httpRequest = http.createHttp();
     try {
-      console.info('AIService', `chatOpenAI: url=${apiUrl}, model=${modelName}, timeout=60s`);
-      const response = await httpRequest.request(
-        apiUrl,
-        {
-          method: http.RequestMethod.POST,
-          header: {
-            'Content-Type': 'application/json',
-            'Authorization': `Bearer ${this.apiKey}`
-          },
-          extraData: JSON.stringify(requestBody),
-          connectTimeout: 15000,
-          readTimeout: 60000
-        }
-      );
+      const context = await MemoryService.getInstance().buildLayeredContext(1); // L0+L1
 
-      // 先检查 HTTP 状态码
-      if (response.responseCode !== 200) {
-        let errMsg = `HTTP ${response.responseCode}`;
-        try {
-          const errResult = JSON.parse(response.result as string) as Record<string, Object>;
-          const errObj = errResult['error'] as Record<string, string> | undefined;
-          if (errObj && errObj['message']) {
-            errMsg = errObj['message'];
-          }
-        } catch {
-          // 响应不是 JSON
-        }
-        throw new Error(`API 错误: ${errMsg}`);
-      }
+      const content = (article.content || article.summary || '').substring(0, 2000);
 
-      let result: OpenAIResponse;
-      try {
-        result = JSON.parse(response.result as string) as OpenAIResponse;
-      } catch (parseErr) {
-        const parseMsg = AIService.extractErrMsg(parseErr);
-        throw new Error(`JSON 解析失败: ${parseMsg}，响应: ${String(response.result).substring(0, 200)}`);
-      }
-      if (result.choices.length === 0) {
-        return '';
-      }
-      return result.choices[0].message.content;
+      const systemPrompt = context
+        ? `你是我的私人阅读助手，了解我的阅读偏好。\n\n${context}`
+        : '你是一个智能阅读助手。';
+
+      const userPrompt = `请对以下文章进行解读：
+
+标题：${article.title}
+来源：${article.feedTitle ?? '未知'}
+内容：${content}
+
+请提供：
+1. 摘要正文（90-140字，2-3句，包含"发生了什么 + 为什么重要/影响 + 结论"）
+2. **核心观点**（1-2条，每条不超过14字）
+
+输出要求：
+- 第一段直接输出摘要正文，不要写"文章总结""摘要："等标签
+- 然后再输出"核心观点"条目
+- 信息要具体，避免空话、套话和重复`;
+
+      await this.chatStream(systemPrompt, userPrompt, 1024, onChunk, onDone, onError);
     } catch (e) {
-      const errMsg = AIService.extractErrMsg(e);
-      console.error('AIService', `chatOpenAI failed: ${errMsg}`);
-      throw new Error(errMsg);
-    } finally {
-      httpRequest.destroy();
+      const msg = AIService.extractErrMsg(e);
+      console.error('AIService', `analyzeArticleStream failed: ${msg}`);
+      onError(msg);
     }
   }
 
@@ -575,97 +518,159 @@ ${articleList}`;
   }
 
   /**
-   * 精读辅助分析
+   * 通义千问原生 API 调用
    */
-  async analyzeArticle(article: Article): Promise<string> {
-    if (!this.hasApiKey()) {
-      throw new Error('未配置 AI API Key');
-    }
+  private async chatQwen(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
+    const messages: QwenMessage[] = [];
+    messages.push(new QwenMessage('system', systemPrompt));
+    messages.push(new QwenMessage('user', userPrompt));
 
+    const input = new QwenInput();
+    input.messages = messages;
+
+    const params = new QwenParameters();
+    params.result_format = 'message';
+    params.max_tokens = maxTokens;
+    params.temperature = 0.7;
+
+    const requestBody = new QwenRequest();
+    // 优先使用用户配置的模型名，否则用默认值
+    requestBody.model = this.model.length > 0 ? this.model : Constants.QWEN_MODEL;
+    requestBody.input = input;
+    requestBody.parameters = params;
+
+    // 优先使用自定义 Base URL（通义千问兼容场景），否则使用官方地址
+    const url = this.baseUrl.length > 0 ? this.baseUrl : Constants.QWEN_API_URL;
+
+    const httpRequest = http.createHttp();
     try {
-      const context = await MemoryService.getInstance().buildLayeredContext(1); // L0+L1: 解读只需偏好
+      console.info('AIService', `chatQwen: url=${url}, model=${requestBody.model}`);
+      const response = await httpRequest.request(
+        url,
+        {
+          method: http.RequestMethod.POST,
+          header: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`
+          },
+          extraData: JSON.stringify(requestBody),
+          connectTimeout: 30000,
+          readTimeout: 120000
+        }
+      );
 
-      const content = (article.content || article.summary || '').substring(0, 2000);
+      // 先检查 HTTP 状态码
+      if (response.responseCode !== 200) {
+        // 尝试解析错误响应
+        let errMsg = `HTTP ${response.responseCode}`;
+        try {
+          const errResult = JSON.parse(response.result as string) as QwenResponse;
+          if (errResult.message) {
+            errMsg = `${errResult.code || ''} ${errResult.message}`;
+          }
+        } catch {
+          // 响应不是 JSON，使用原始错误码
+        }
+        throw new Error(`API 错误: ${errMsg}`);
+      }
 
-      const systemPrompt = context
-        ? `你是我的私人阅读助手，了解我的阅读偏好。\n\n${context}`
-        : '你是一个智能阅读助手。';
+      const result = JSON.parse(response.result as string) as QwenResponse;
 
-      const userPrompt = `请对以下文章进行解读：
-
-标题：${article.title}
-来源：${article.feedTitle ?? '未知'}
-内容：${content}
-
-请提供：
-1. 摘要正文（90-140字，2-3句，包含“发生了什么 + 为什么重要/影响 + 结论”）
-2. **核心观点**（1-2条，每条不超过14字）
-
-输出要求：
-- 第一段直接输出摘要正文，不要写“文章总结”“摘要：”等标签
-- 然后再输出“核心观点”条目
-- 信息要具体，避免空话、套话和重复`;
-
-      return await this.chat(systemPrompt, userPrompt, 380);
-    } catch (e) {
-      const msg = AIService.extractErrMsg(e);
-      console.error('AIService', `analyzeArticle failed: ${msg}`);
-      throw new Error(`analyzeArticle failed: ${msg}`);
+      // 兼容两种响应格式：
+      // 1. result_format='text' 时，返回 output.text
+      // 2. result_format='message' 时，返回 output.choices[0].message.content
+      if (result.output?.choices && result.output.choices.length > 0) {
+        return result.output.choices[0].message.content || '';
+      }
+      return result.output?.text ?? '';
+    } finally {
+      httpRequest.destroy();
     }
   }
 
   /**
-   * 流式精读辅助分析：通过回调逐步返回文字
-   * @param article 待分析的文章
-   * @param onChunk 每次收到新文本块时的回调
-   * @param onDone 流式输出结束时的回调
-   * @param onError 出错时的回调
+   * OpenAI 兼容协议调用（适用于 OpenAI、DeepSeek、Groq、自定义等）
    */
-  async analyzeArticleStream(
-    article: Article,
-    onChunk: (text: string) => void,
-    onDone: () => void,
-    onError: (msg: string) => void
-  ): Promise<void> {
-    if (!this.hasApiKey()) {
-      onError('未配置 AI API Key，请在设置中配置');
-      return;
+  private async chatOpenAI(systemPrompt: string, userPrompt: string, maxTokens: number): Promise<string> {
+    const apiUrl = this.resolveOpenAIUrl();
+    if (apiUrl.length === 0) {
+      throw new Error('未配置 API 端点，请在设置中填写 Base URL');
     }
 
+    const modelName = this.resolveModelName();
+    if (modelName.length === 0) {
+      throw new Error('未配置模型名称，请在设置中填写模型名称');
+    }
+
+    const messages: OpenAIMessage[] = [];
+    messages.push(new OpenAIMessage('system', systemPrompt));
+    messages.push(new OpenAIMessage('user', userPrompt));
+
+    const requestBody = new OpenAIRequest();
+    requestBody.model = modelName;
+    requestBody.messages = messages;
+    requestBody.max_tokens = maxTokens;
+    requestBody.temperature = 0.7;
+
+    const httpRequest = http.createHttp();
     try {
-      const context = await MemoryService.getInstance().buildLayeredContext(1); // L0+L1
+      console.info('AIService', `chatOpenAI: url=${apiUrl}, model=${modelName}, timeout=120s`);
+      const response = await httpRequest.request(
+        apiUrl,
+        {
+          method: http.RequestMethod.POST,
+          header: {
+            'Content-Type': 'application/json',
+            'Authorization': `Bearer ${this.apiKey}`
+          },
+          extraData: JSON.stringify(requestBody),
+          connectTimeout: 30000,
+          readTimeout: 120000
+        }
+      );
 
-      const content = (article.content || article.summary || '').substring(0, 2000);
+      // 先检查 HTTP 状态码
+      if (response.responseCode !== 200) {
+        let errMsg = `HTTP ${response.responseCode}`;
+        try {
+          const errResult = JSON.parse(response.result as string) as Record<string, Object>;
+          const errObj = errResult['error'] as Record<string, string> | undefined;
+          if (errObj && errObj['message']) {
+            errMsg = errObj['message'];
+          }
+        } catch {
+          // 响应不是 JSON
+        }
+        throw new Error(`API 错误: ${errMsg}`);
+      }
 
-      const systemPrompt = context
-        ? `你是我的私人阅读助手，了解我的阅读偏好。\n\n${context}`
-        : '你是一个智能阅读助手。';
-
-      const userPrompt = `请对以下文章进行解读：
-
-标题：${article.title}
-来源：${article.feedTitle ?? '未知'}
-内容：${content}
-
-请提供：
-1. 摘要正文（90-140字，2-3句，包含“发生了什么 + 为什么重要/影响 + 结论”）
-2. **核心观点**（1-2条，每条不超过14字）
-
-输出要求：
-- 第一段直接输出摘要正文，不要写“文章总结”“摘要：”等标签
-- 然后再输出“核心观点”条目
-- 信息要具体，避免空话、套话和重复`;
-
-      await this.chatStream(systemPrompt, userPrompt, 380, onChunk, onDone, onError);
+      let result: OpenAIResponse;
+      try {
+        result = JSON.parse(response.result as string) as OpenAIResponse;
+      } catch (parseErr) {
+        const parseMsg = AIService.extractErrMsg(parseErr);
+        throw new Error(`JSON 解析失败: ${parseMsg}，响应: ${String(response.result).substring(0, 200)}`);
+      }
+      if (result.choices.length === 0) {
+        return '';
+      }
+      return result.choices[0].message.content;
     } catch (e) {
-      const msg = AIService.extractErrMsg(e);
-      console.error('AIService', `analyzeArticleStream failed: ${msg}`);
-      onError(msg);
+      const errMsg = AIService.extractErrMsg(e);
+      console.error('AIService', `chatOpenAI failed: ${errMsg}`);
+      throw new Error(errMsg);
+    } finally {
+      httpRequest.destroy();
     }
   }
 
   /**
    * 流式对话入口，通过 requestInStream + SSE 逐步回调文本
+   *
+   * 已知问题修复：
+   * 1. readTimeout 从 60s 提升到 120s — DeepSeek 首 token 延迟可达 30s+
+   * 2. 引入 isFinished 标志防止 dataEnd + catch 双重回调冲突
+   * 3. 检测 finish_reason='length' 提示用户输出被截断
    */
   private async chatStream(
     systemPrompt: string,
@@ -704,9 +709,14 @@ ${articleList}`;
 
     const httpRequest = http.createHttp();
     let sseBuffer = '';
+    // 防止 dataEnd 和 catch 双重回调（超时时两者可能都触发）
+    let isFinished = false;
 
     // 订阅流式数据接收
     httpRequest.on('dataReceive', (data: ArrayBuffer) => {
+      if (isFinished) {
+        return;
+      }
       try {
         const decoder = new util.TextDecoder('utf-8');
         const chunk = decoder.decodeToString(new Uint8Array(data));
@@ -745,6 +755,11 @@ ${articleList}`;
 
     // 订阅数据接收完毕
     httpRequest.on('dataEnd', () => {
+      if (isFinished) {
+        return;
+      }
+      isFinished = true;
+
       // 处理 buffer 中剩余数据
       if (sseBuffer.trim().length > 0) {
         const remaining = sseBuffer.trim();
@@ -763,6 +778,7 @@ ${articleList}`;
           }
         }
       }
+
       onDone();
       httpRequest.off('dataReceive');
       httpRequest.off('dataEnd');
@@ -780,21 +796,27 @@ ${articleList}`;
             'Authorization': `Bearer ${this.apiKey}`
           },
           extraData: JSON.stringify(requestBody),
-          connectTimeout: 15000,
-          readTimeout: 60000
+          connectTimeout: 30000,
+          readTimeout: 120000
         }
       );
 
       if (responseCode !== 200) {
-        onError(`API 请求失败: HTTP ${responseCode}`);
+        if (!isFinished) {
+          isFinished = true;
+          onError(`API 请求失败: HTTP ${responseCode}`);
+        }
         httpRequest.off('dataReceive');
         httpRequest.off('dataEnd');
         httpRequest.destroy();
       }
     } catch (e) {
-      const msg = AIService.extractErrMsg(e);
-      console.error('AIService', `chatStream request failed: ${msg}`);
-      onError(msg);
+      if (!isFinished) {
+        isFinished = true;
+        const msg = AIService.extractErrMsg(e);
+        console.error('AIService', `chatStream request failed: ${msg}`);
+        onError(msg);
+      }
       httpRequest.off('dataReceive');
       httpRequest.off('dataEnd');
       httpRequest.destroy();

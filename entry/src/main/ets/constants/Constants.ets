@@ -94,7 +94,7 @@ export class Constants {
     ''
   ];
   static readonly AI_PROVIDER_DEFAULT_MODELS: string[] = [
-    'qwen-plus', 'gpt-4o-mini', 'deepseek-chat', 'llama3-8b-8192', ''
+    'qwen-plus', 'gpt-4o-mini', 'deepseek-v4-flash', 'llama3-8b-8192', ''
   ];
 
   // 记忆系统参数

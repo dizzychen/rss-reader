@@ -50,6 +50,8 @@ oh-package-lock.json5
 # ===== Claude Code 本地配置 =====
 /.claude
 
+/.codegraph
+
 # ===== CodeBuddy =====
 /.codebuddy
 

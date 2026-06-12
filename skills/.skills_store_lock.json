@@ -24,6 +24,12 @@
       "zip_url": "https://lightmake.site/api/v1/download?slug=engineer",
       "source": "skillhub",
       "version": "1.0.0"
+    },
+    "code-reviewer": {
+      "name": "代码审查",
+      "zip_url": "https://lightmake.site/api/v1/download?slug=code-reviewer",
+      "source": "skillhub",
+      "version": "1.0.0"
     }
   }
 }
